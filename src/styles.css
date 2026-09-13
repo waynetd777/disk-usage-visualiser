@@ -75,6 +75,12 @@ code, pre, .mono { font-family: var(--mono); font-size: 12px; }
 
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
 .topbar { display: flex; align-items: center; gap: 10px; padding: 12px 18px 10px; border-bottom: 1px solid var(--border); background: var(--panel); min-height: 52px; }
+/* Back / forward, like Finder's. */
+.navbtns { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; background: var(--panel); flex: none; }
+.navb { border: 0; background: transparent; width: 28px; height: 24px; padding: 0 0 2px; font-size: 18px; line-height: 1; color: var(--text); }
+.navb + .navb { border-left: 1px solid var(--border); }
+.navb:hover:not(:disabled) { background: var(--panel-2); }
+.navb:disabled { opacity: .3; }
 .crumbs { display: flex; align-items: center; gap: 2px; min-width: 0; flex-wrap: wrap; font-size: 14px; font-weight: 600; }
 .crumbs .crumb { display: inline-flex; align-items: center; gap: 2px; }
 .crumbs button { border: 0; background: transparent; padding: 2px 6px; border-radius: 5px; color: var(--accent); font-weight: 600; font-size: 14px; }

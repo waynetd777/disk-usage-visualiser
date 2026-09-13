@@ -20,8 +20,9 @@ chrome and the lessons learned building it.
 - **Cloud folders** (OneDrive, iCloud Drive: anything under `~/Library/CloudStorage` or
   `~/Library/Mobile Documents`) carry a double edge and show two numbers: what is on disk and what
   is in the cloud.
-- **Click a block to zoom in**; the breadcrumb, Esc or ⌘↑ take you back up. Hover for the full
-  path, sizes, item count and share of the parent.
+- **Click a block to zoom in**; the breadcrumb, Esc or ⌘↑ take you back up, and the ‹ › buttons
+  (⌘[ and ⌘]) step back and forward through where you have been. Hover for the full path, sizes,
+  item count and share of the parent.
 - **Reveal in Finder**: the arrow on a block's header, ⌘-click on the block, right-click for a menu
   (Reveal in Finder, Zoom in, Copy path, Get Info…), or the arrow beside the breadcrumb for the
   folder on screen. ⌘⇧R does the same.
@@ -37,7 +38,9 @@ so walking it from `/` would count everything twice), `/Volumes`, `/dev` or the 
 
 Sizes are **allocated bytes on disk**, not file lengths, because the question is what is using the
 disk. A cloud file that is online-only has a length but no blocks, so it counts as nothing on disk
-and shows up only in the folder's "in cloud" figure.
+and shows up only in the folder's "in cloud" figure. So that an online-only OneDrive does not
+vanish, a cloud folder's block is never drawn smaller than 2% of its cloud size; inside such a
+folder the blocks are then proportional to cloud size, and the tooltip says so.
 
 Every completed scan is **cached** under `~/Library/Application Support/Disk Usage Visualiser/`,
 one file per root. On launch the cached map is drawn at once and a fresh scan runs behind it; the

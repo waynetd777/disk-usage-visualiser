@@ -70,10 +70,17 @@ function squarify(items: Item[], w: number, h: number): { item: Item; x: number;
   return rects;
 }
 
+/// Layout weights come from the scan (`View.weight`): size on disk, with the cloud floor. The
+/// loose-files block follows the same rule so a folder of online-only files still shows up.
+function looseWeight(v: View): number {
+  return v.cloud ? Math.max(v.loose_size, Math.floor(v.loose_apparent / 50)) : v.loose_size;
+}
+
 function childrenOf(v: View): Item[] {
-  const items: Item[] = v.kids.map((k) => ({ block: { kind: "dir", view: k }, size: k.size }));
-  if (v.loose_size > 0 || (v.files > 0 && v.kids.length === 0 && v.more === 0)) items.push({ block: { kind: "files", view: v }, size: Math.max(v.loose_size, 1) });
-  if (v.more > 0 && v.more_size > 0) items.push({ block: { kind: "more", view: v }, size: v.more_size });
+  const items: Item[] = v.kids.map((k) => ({ block: { kind: "dir", view: k }, size: k.weight }));
+  const lw = looseWeight(v);
+  if (lw > 0 || (v.files > 0 && v.kids.length === 0 && v.more === 0)) items.push({ block: { kind: "files", view: v }, size: Math.max(lw, 1) });
+  if (v.more > 0 && v.more_weight > 0) items.push({ block: { kind: "more", view: v }, size: v.more_weight });
   items.sort((a, b) => b.size - a.size);
   return items;
 }
@@ -247,7 +254,9 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
         `<span>Items</span><b>${fmtN(v.items)}</b>` +
         `<span>Level</span><b>${v.depth}</b>` +
         (v.denied ? `<span>Unreadable</span><b>${fmtN(v.denied)} folder${v.denied === 1 ? "" : "s"}</b>` : "") +
-        `</div><div class="hint">${zoomable ? "Click to zoom in · " : ""}⌘-click or right-click to reveal in Finder</div>`;
+        `</div>` +
+        (v.cloud && v.weight > v.size ? `<div class="hint">Drawn by cloud size: little or nothing of this is on disk.</div>` : "") +
+        `<div class="hint">${zoomable ? "Click to zoom in · " : ""}⌘-click or right-click to reveal in Finder</div>`;
     }
     tip.innerHTML = html;
     tip.hidden = false;

@@ -26,6 +26,8 @@ export default function App() {
   const [menu, setMenu] = useState<{ block: Block; x: number; y: number } | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
   const wasScanning = useRef(false);
+  // Where you have been, like Finder's back and forward. Zooming pushes; a new root starts over.
+  const [hist, setHist] = useState<{ stack: string[]; idx: number }>({ stack: [], idx: -1 });
 
   const say = useCallback((m: string) => {
     setToast(m);
@@ -44,6 +46,7 @@ export default function App() {
         setInfo(s);
         if (s.loading) { window.setTimeout(tick, 150); return; }
         setViewPath((p) => p ?? s.root);
+        setHist((h) => (h.stack.length ? h : { stack: [s.root], idx: 0 }));
         hideSplash();
       }).catch(() => { if (alive) window.setTimeout(tick, 400); });
     };
@@ -88,7 +91,7 @@ export default function App() {
       .catch((e) => {
         if (!alive) return;
         // The path is not in this scan (e.g. the root changed): fall back to the root.
-        if (viewPath !== info.root) setViewPath(info.root);
+        if (viewPath !== info.root) { setViewPath(info.root); setHist({ stack: [info.root], idx: 0 }); }
         else { setTree(null); setTreeError(String(e)); }
       });
     return () => { alive = false; };
@@ -100,15 +103,39 @@ export default function App() {
     api.reveal(path).then(() => say(`Revealed in Finder: ${path}`)).catch((e) => say(String(e)));
   }, [say]);
 
-  const zoomTo = useCallback((path: string) => { setMenu(null); setViewPath(path); }, []);
+  const go = useCallback((path: string) => {
+    setMenu(null);
+    setViewPath(path);
+    setHist((h) => {
+      if (h.stack[h.idx] === path) return h;
+      const stack = [...h.stack.slice(0, h.idx + 1), path];
+      return { stack, idx: stack.length - 1 };
+    });
+  }, []);
+  const zoomTo = go;
+
+  const canBack = hist.idx > 0;
+  const canForward = hist.idx >= 0 && hist.idx < hist.stack.length - 1;
+  const back = useCallback(() => {
+    if (hist.idx <= 0) return;
+    setMenu(null);
+    setViewPath(hist.stack[hist.idx - 1]);
+    setHist({ ...hist, idx: hist.idx - 1 });
+  }, [hist]);
+  const forward = useCallback(() => {
+    if (hist.idx >= hist.stack.length - 1) return;
+    setMenu(null);
+    setViewPath(hist.stack[hist.idx + 1]);
+    setHist({ ...hist, idx: hist.idx + 1 });
+  }, [hist]);
 
   const up = useCallback(() => {
     if (!viewPath || !info || viewPath === info.root) return;
-    setViewPath(parentPath(viewPath) ?? info.root);
-  }, [viewPath, info]);
+    go(parentPath(viewPath) ?? info.root);
+  }, [viewPath, info, go]);
 
   const startScan = useCallback((root?: string) => {
-    api.startScan(root).then(() => { if (root) setViewPath(root); refreshInfo(); }).catch((e) => say(String(e)));
+    api.startScan(root).then(() => { if (root) { setViewPath(root); setHist({ stack: [root], idx: 0 }); } refreshInfo(); }).catch((e) => say(String(e)));
   }, [refreshInfo, say]);
 
   const stopScan = useCallback(() => {
@@ -133,10 +160,12 @@ export default function App() {
       else if ((e.key === "R" || e.key === "r") && e.shiftKey) { e.preventDefault(); if (viewPath) reveal(viewPath); }
       else if (e.key === "o") { e.preventDefault(); void chooseFolder(); }
       else if (e.key === "ArrowUp") { e.preventDefault(); up(); }
+      else if (e.key === "[") { e.preventDefault(); back(); }
+      else if (e.key === "]") { e.preventDefault(); forward(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [menu, up, scanning, startScan, viewPath, reveal, chooseFolder]);
+  }, [menu, up, back, forward, scanning, startScan, viewPath, reveal, chooseFolder]);
 
   useEffect(() => {
     if (!menu) return;
@@ -207,7 +236,7 @@ export default function App() {
               <b>Last scan {fmtWhen(info.scan.finished)}</b><br />
               {fmtN(info.scan.items)} items in {fmtDuration(info.scan.duration_ms)}<br />
               {info.scan.denied > 0 ? (
-                <span className="warnt">{fmtN(info.scan.denied)} folder{info.scan.denied === 1 ? "" : "s"} not readable</span>
+                <span className="warnt" title="Mostly system folders owned by root (e.g. /private/var/folders, /System/Library/Templates). Full Disk Access opens your own protected folders, not those.">{fmtN(info.scan.denied)} folder{info.scan.denied === 1 ? "" : "s"} not readable</span>
               ) : (
                 <span>Cached for next launch</span>
               )}
@@ -222,6 +251,10 @@ export default function App() {
 
       <main className="main">
         <div className="topbar" data-tauri-drag-region="deep">
+          <div className="navbtns">
+            <button className="navb" disabled={!canBack} onClick={back} title="Back (⌘[)" aria-label="Back">‹</button>
+            <button className="navb" disabled={!canForward} onClick={forward} title="Forward (⌘])" aria-label="Forward">›</button>
+          </div>
           <div className="crumbs">
             {crumbs.map((c, i) => (
               <span key={c.path} className="crumb">

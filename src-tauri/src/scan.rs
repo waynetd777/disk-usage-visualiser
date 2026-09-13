@@ -182,6 +182,14 @@ impl Node {
     }
 }
 
+/// The area a folder gets. On disk for everything, except that a cloud folder is never worth
+/// less than 2% of what it holds in the cloud: a fully online-only OneDrive is 0 bytes on disk
+/// and would otherwise vanish into the "more folders" block. Inside such a tree every weight is
+/// then proportional to cloud size, so zooming into it still says which parts are big.
+pub fn weight(n: &Node) -> u64 {
+    if n.cloud { n.size.max(n.apparent / 50) } else { n.size }
+}
+
 /// What the UI draws: the subtree under one folder, with folders too small to see folded into
 /// `more` / `more_size` so a 300k-node scan becomes a few thousand blocks.
 #[derive(Serialize, Clone, Debug)]
@@ -198,24 +206,28 @@ pub struct View {
     pub denied: u64,
     /// Nesting depth from the scan root (root = 0); drives the block colour.
     pub depth: u32,
+    /// Layout weight, see `weight()`.
+    pub weight: u64,
     pub kids: Vec<View>,
     /// Child folders not listed because they were below the size cut.
     pub more: u32,
     pub more_size: u64,
     pub more_apparent: u64,
+    pub more_weight: u64,
 }
 
-pub fn view(node: &Node, path: &str, depth: u32, min_size: u64, max_depth: u32) -> View {
+pub fn view(node: &Node, path: &str, depth: u32, min_weight: u64, max_depth: u32) -> View {
     let mut kids = Vec::new();
-    let (mut more, mut more_size, mut more_apparent) = (0u32, 0u64, 0u64);
+    let (mut more, mut more_size, mut more_apparent, mut more_weight) = (0u32, 0u64, 0u64, 0u64);
     for k in &node.kids {
-        if k.size >= min_size && depth < max_depth {
+        if weight(k) >= min_weight && depth < max_depth {
             let p = if path == "/" { format!("/{}", k.name) } else { format!("{path}/{}", k.name) };
-            kids.push(view(k, &p, depth + 1, min_size, max_depth));
+            kids.push(view(k, &p, depth + 1, min_weight, max_depth));
         } else {
             more += 1;
             more_size += k.size;
             more_apparent += k.apparent;
+            more_weight += weight(k);
         }
     }
     View {
@@ -230,10 +242,12 @@ pub fn view(node: &Node, path: &str, depth: u32, min_size: u64, max_depth: u32) 
         cloud: node.cloud,
         denied: node.denied,
         depth,
+        weight: weight(node),
         kids,
         more,
         more_size,
         more_apparent,
+        more_weight,
     }
 }
 
@@ -262,6 +276,7 @@ mod tests {
         assert_eq!(v.kids[0].kids[0].path, "/x/a/b");
         let v = view(&n, "/x", 0, u64::MAX, 10);
         assert_eq!((v.kids.len(), v.more), (0, 2));
+        assert_eq!(v.more_weight, n.kids.iter().map(weight).sum::<u64>());
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -270,6 +285,16 @@ mod tests {
         let prog = Progress::default();
         prog.cancel.store(true, Ordering::Relaxed);
         assert!(walk(Path::new("/tmp"), "tmp".into(), false, &prog).is_none());
+    }
+
+    #[test]
+    fn cloud_folders_keep_a_floor() {
+        let online_only = Node { name: "OneDrive".into(), size: 0, apparent: 8_500_000_000, cloud: true, ..Default::default() };
+        assert_eq!(weight(&online_only), 170_000_000);
+        let pinned = Node { name: "OneDrive".into(), size: 55_000_000_000, apparent: 295_000_000_000, cloud: true, ..Default::default() };
+        assert_eq!(weight(&pinned), 55_000_000_000, "on-disk size wins when it is the larger");
+        let local = Node { name: "Docs".into(), size: 0, apparent: 1_000_000, ..Default::default() };
+        assert_eq!(weight(&local), 0, "only cloud folders get the floor");
     }
 
     #[test]

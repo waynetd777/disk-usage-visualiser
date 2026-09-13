@@ -59,8 +59,11 @@ export interface View {
   cloud: boolean;
   denied: number;
   depth: number;
+  /// Layout weight: size on disk, but a cloud folder is never less than 2% of its cloud size.
+  weight: number;
   kids: View[];
   more: number;
   more_size: number;
   more_apparent: number;
+  more_weight: number;
 }

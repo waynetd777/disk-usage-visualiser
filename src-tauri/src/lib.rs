@@ -154,8 +154,8 @@ fn get_tree(state: State<AppState>, path: String, min_fraction: f64) -> Result<s
     let parts: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
     let node = scan.tree.find(&parts).ok_or_else(|| format!("{path} is not in the scan"))?;
     let depth = parts.len() as u32;
-    let min_size = ((node.size as f64) * min_fraction.clamp(0.0, 1.0)) as u64;
-    Ok(scan::view(node, &path, depth, min_size.max(1), depth + 14))
+    let min_weight = ((scan::weight(node) as f64) * min_fraction.clamp(0.0, 1.0)) as u64;
+    Ok(scan::view(node, &path, depth, min_weight.max(1), depth + 14))
 }
 
 fn start_scan_thread(app: &AppHandle, root: String) -> Result<(), String> {
