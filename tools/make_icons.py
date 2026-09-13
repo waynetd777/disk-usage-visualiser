@@ -6,7 +6,7 @@ level colours the app uses (red, orange, amber, green, teal, blue). Drawn with P
 exported from an SVG because no SVG rasteriser is installed here, so this file is the source of
 truth for the artwork.
 
-Lessons carried from backup-manager:
+Lessons learned the hard way:
   * the tile needs real transparent corners (qlmanage flattens on white, PIL does not);
   * the tray image is a TEMPLATE: black plus alpha only, macOS tints it, so shape is the message;
   * supersample and downsample for smooth edges.
@@ -80,8 +80,8 @@ def app_icon():
 
 
 def tray_icon():
-    """Nested squares, black on alpha, 44px (22pt @2x). Fills ~1.32 of the 32-unit design like
-    backup-manager's ring so it sits at the same optical size as the system's own items."""
+    """Nested squares, black on alpha, 44px (22pt @2x). Fills ~1.32 of the 32-unit design so it
+    sits at the same optical size as the system's own menu bar items."""
     T = 44
     ss = 8
     img = Image.new("RGBA", (T * ss, T * ss), (0, 0, 0, 0))

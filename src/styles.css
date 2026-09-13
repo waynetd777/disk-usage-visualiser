@@ -39,7 +39,7 @@ button { cursor: default; }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 code, pre, .mono { font-family: var(--mono); font-size: 12px; }
 
-/* Chrome: the same shell as Backup Manager. The sidebar's top padding leaves room for the traffic lights. */
+/* Chrome: sidebar + content. The sidebar's top padding leaves room for the traffic lights. */
 .app { display: grid; grid-template-columns: 200px 1fr; grid-template-rows: 100%; height: 100%; overflow: hidden; }
 .sidebar { background: var(--sidebar); border-right: 1px solid var(--border); padding: 50px 12px 12px; display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow: hidden; }
 .brand { font-weight: 600; font-size: 11.5px; color: var(--muted); padding: 0 6px 6px; letter-spacing: .04em; text-transform: uppercase; }

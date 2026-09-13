@@ -1,7 +1,13 @@
-# Disk Usage — build, sign and install the app. Same shape as backup-manager's Makefile.
+# Disk Usage — build, sign and install the app.
 
 APP      := src-tauri/target/release/bundle/macos/Disk Usage.app
-SIGN_ID  := $(shell /usr/bin/plutil -extract bundle.macOS.signingIdentity raw -o - src-tauri/tauri.conf.json)
+
+# The signing certificate is named in signing.local, which is untracked: the name of a
+# keychain identity is local to the machine that holds it. Copy signing.local.example and
+# put your own self-signed certificate's name in it. See the README.
+-include signing.local
+export APPLE_SIGNING_IDENTITY
+SIGN_ID  := $(APPLE_SIGNING_IDENTITY)
 
 VERSION  := $(shell /usr/bin/plutil -extract version raw -o - src-tauri/tauri.conf.json)
 ZIP      := dist-release/Disk-Usage-$(VERSION)-arm64.zip
@@ -21,9 +27,10 @@ test: check
 # and `make check` keep their incremental caches.
 RELEASE_RUSTFLAGS := --remap-path-prefix=$(HOME)=/build
 
-## Build the signed .app. The identity comes from tauri.conf.json; see the README for why a
+## Build the signed .app. The identity comes from signing.local; see the README for why a
 ## stable signature matters (Full Disk Access is tied to it).
 app:
+	@test -n "$(SIGN_ID)" || { echo "APPLE_SIGNING_IDENTITY is not set: copy signing.local.example to signing.local"; exit 1; }
 	RUSTFLAGS="$(RELEASE_RUSTFLAGS)" npm run tauri build
 	@codesign -dv --verbose=2 "$(APP)" 2>&1 | grep -E "^Authority=$(SIGN_ID)" >/dev/null \
 	  && echo "signed with $(SIGN_ID)" \

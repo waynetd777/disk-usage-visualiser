@@ -107,10 +107,11 @@ make install-app      # signed build, copied to /Applications
 ## Notes
 
 **Code signing.** macOS ties privacy grants to an app's signature, so an unsigned build would need
-Full Disk Access granted again after every rebuild. Builds are signed with the same self-signed
-certificate (`Backup Manager Dev`, in the login keychain, not in this repo) rather than an Apple
-Developer ID. That is why a downloaded copy needs the one-off `xattr -dr com.apple.quarantine`
-above; a build made on this machine runs without it.
+Full Disk Access granted again after every rebuild. Builds are signed with a self-signed
+certificate in the login keychain rather than an Apple Developer ID. Copy `signing.local.example`
+to `signing.local` (untracked) and name your own certificate there; `make app` refuses to build
+without it. That is why a downloaded copy needs the one-off `xattr -dr com.apple.quarantine`
+above; a build made on the signing machine runs without it.
 
 **Build times.** `src-tauri/Cargo.toml` keeps the lib `rlib`-only and uses thin LTO with parallel
 codegen units, which takes an incremental build from minutes to about twenty seconds at the cost of

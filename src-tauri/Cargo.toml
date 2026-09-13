@@ -10,7 +10,7 @@ edition = "2021"
 name = "disk_usage_visualiser_lib"
 # rlib only. The Tauri template's ["staticlib", "cdylib", "rlib"] exists for iOS and Android;
 # this app is macOS-only, and each extra crate type is another full LTO link of the whole
-# program on every build (lesson from backup-manager: 115s -> 21s incremental).
+# program on every build (measured here: 115s -> 21s incremental).
 crate-type = ["rlib"]
 
 # The binary name is what the Dock and Activity Monitor show in `tauri dev`

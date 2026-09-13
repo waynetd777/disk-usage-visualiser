@@ -92,7 +92,7 @@ fn home() -> String {
 }
 
 /// ~/Library/Safari is only readable with Full Disk Access (~/Library/CloudStorage is NOT a
-/// valid probe: it is readable without it — lesson from backup-manager).
+/// valid probe: it is readable without Full Disk Access).
 fn has_full_disk_access() -> bool {
     std::fs::read_dir(Path::new(&home()).join("Library/Safari")).is_ok()
 }

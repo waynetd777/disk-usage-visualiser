@@ -45,8 +45,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "13.0",
-      "signingIdentity": "Backup Manager Dev"
+      "minimumSystemVersion": "13.0"
     }
   }
 }
