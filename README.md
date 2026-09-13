@@ -5,7 +5,7 @@ block, sized by what it takes up, so the big things are big.
 
 Built with Tauri 2, React and Rust.
 
-![The app on the boot volume](docs/screenshots/app.png)
+![The app showing /System/Library](docs/screenshots/app.png)
 
 ## What it does
 

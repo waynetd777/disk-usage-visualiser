@@ -15,10 +15,16 @@ check:
 
 test: check
 
+# Release builds strip the builder's home directory out of the binary. Rust bakes absolute
+# paths (~/.cargo/registry, ~/.rustup) into panic metadata, which would otherwise ship the
+# builder's username to everyone who downloads the app. Debug builds skip this so `make dev`
+# and `make check` keep their incremental caches.
+RELEASE_RUSTFLAGS := --remap-path-prefix=$(HOME)=/build
+
 ## Build the signed .app. The identity comes from tauri.conf.json; see the README for why a
 ## stable signature matters (Full Disk Access is tied to it).
 app:
-	npm run tauri build
+	RUSTFLAGS="$(RELEASE_RUSTFLAGS)" npm run tauri build
 	@codesign -dv --verbose=2 "$(APP)" 2>&1 | grep -E "^Authority=$(SIGN_ID)" >/dev/null \
 	  && echo "signed with $(SIGN_ID)" \
 	  || { echo "WARNING: app is not signed with $(SIGN_ID); privacy grants will not persist"; exit 1; }
