@@ -131,3 +131,8 @@ DU_TIMING=1 "/Applications/Disk Usage.app/Contents/MacOS/DiskUsage"
 | The scanner | `src-tauri/src/scan.rs` |
 | The treemap | `src/Treemap.tsx` |
 | Icon artwork | `design/icon.png` and `src-tauri/icons/tray@2x.png`, drawn by `tools/make_icons.py` |
+
+## Licence
+
+MIT. See [LICENSE](LICENSE). Use the code for anything, including commercially,
+as long as the copyright notice and licence text come along with it.

@@ -3,6 +3,7 @@ name = "disk-usage-visualiser"
 version = "1.0.0"
 description = "Nested treemap of what is using the disk on this Mac"
 authors = ["Wayne Davies"]
+license = "MIT"
 edition = "2021"
 
 [lib]
