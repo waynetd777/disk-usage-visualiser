@@ -26,3 +26,6 @@ src-tauri/gen/schemas
 /.codex
 /CLAUDE.md
 /AGENTS.md
+
+# Release artefacts (attached to GitHub releases, not tracked)
+dist-release

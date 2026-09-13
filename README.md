@@ -3,8 +3,7 @@
 A small macOS app that shows what is using the disk: every folder as a block inside its parent's
 block, sized by what it takes up, so the big things are big.
 
-Built with Tauri 2, React and Rust. A sibling of [Backup Manager](../backup-manager), sharing its
-chrome and the lessons learned building it.
+Built with Tauri 2, React and Rust.
 
 ![The app on the boot volume](docs/screenshots/app.png)
 
@@ -57,21 +56,49 @@ does not have Full Disk Access, a banner says so and opens System Settings.
 
 ## Install
 
+Apple Silicon Macs, macOS 13 or later. No need to clone anything.
+
+1. **Download** `Disk-Usage-1.0.0-arm64.zip` from the
+   [latest release](https://github.com/waynetd777/disk-usage-visualiser/releases/latest).
+2. **Unzip it** (double-click) and drag **Disk Usage.app** into your **Applications** folder.
+3. **Clear the download flag.** The app is signed with a self-signed certificate rather than an
+   Apple Developer ID, so macOS will refuse to open it until you do this once. In Terminal:
+
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/Disk Usage.app"
+   ```
+
+   Then open it normally. (Without this you get "Apple could not verify Disk Usage is free of
+   malware"; the command only removes the flag macOS puts on downloaded files.)
+4. **Give it Full Disk Access** under System Settings → Privacy & Security → Full Disk Access, so
+   it can see inside Mail, Safari, Photos and the other protected folders. Without it those folders
+   are skipped and a banner in the app says so.
+
+Closing the window hides it; the app stays in the menu bar, and Quit is in that menu.
+
+If you have the GitHub CLI, steps 1–3 are:
+
 ```bash
-git clone <this repo> ~/Projects/disk-usage-visualiser && cd ~/Projects/disk-usage-visualiser
+gh release download --repo waynetd777/disk-usage-visualiser --pattern '*.zip' --dir ~/Downloads
+ditto -xk ~/Downloads/Disk-Usage-1.0.0-arm64.zip /Applications
+xattr -dr com.apple.quarantine "/Applications/Disk Usage.app"
+```
+
+### Build it yourself
+
+```bash
+git clone https://github.com/waynetd777/disk-usage-visualiser ~/Projects/disk-usage-visualiser
+cd ~/Projects/disk-usage-visualiser
 npm install
 make install-app      # signed build, copied to /Applications
 ```
-
-Then give the app **Full Disk Access** under System Settings → Privacy & Security, so it can see
-inside Mail, Safari, Photos and the other protected folders. Closing the window hides it; the app
-stays in the menu bar, and Quit is in that menu.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `make install-app` | Build the signed app and replace the copy in /Applications |
+| `make release-zip` | Build and zip the app as `dist-release/Disk-Usage-<version>-arm64.zip` |
 | `make check` | Rust tests and TypeScript type-check |
 | `make dev` | App with hot reload (shows as `DiskUsage` in the Dock; the bundle shows `Disk Usage`) |
 | `make icons` | Redraw the icon artwork (`tools/make_icons.py`) and regenerate the Tauri icon set |
@@ -81,9 +108,9 @@ stays in the menu bar, and Quit is in that menu.
 
 **Code signing.** macOS ties privacy grants to an app's signature, so an unsigned build would need
 Full Disk Access granted again after every rebuild. Builds are signed with the same self-signed
-certificate as Backup Manager (`Backup Manager Dev`, in the login keychain, not in this repo); the
-recipe for creating one is in that project's README. Gatekeeper shows a one-time "unidentified
-developer" warning: right-click → Open the first time.
+certificate (`Backup Manager Dev`, in the login keychain, not in this repo) rather than an Apple
+Developer ID. That is why a downloaded copy needs the one-off `xattr -dr com.apple.quarantine`
+above; a build made on this machine runs without it.
 
 **Build times.** `src-tauri/Cargo.toml` keeps the lib `rlib`-only and uses thin LTO with parallel
 codegen units, which takes an incremental build from minutes to about twenty seconds at the cost of

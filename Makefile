@@ -3,7 +3,10 @@
 APP      := src-tauri/target/release/bundle/macos/Disk Usage.app
 SIGN_ID  := $(shell /usr/bin/plutil -extract bundle.macOS.signingIdentity raw -o - src-tauri/tauri.conf.json)
 
-.PHONY: check test app install-app dev icons screenshots sign-check
+VERSION  := $(shell /usr/bin/plutil -extract version raw -o - src-tauri/tauri.conf.json)
+ZIP      := dist-release/Disk-Usage-$(VERSION)-arm64.zip
+
+.PHONY: check test app install-app release-zip dev icons screenshots sign-check
 
 ## cargo test + TypeScript type-check.
 check:
@@ -26,6 +29,14 @@ install-app: app
 	@rm -rf "/Applications/Disk Usage.app"
 	@ditto "$(APP)" "/Applications/Disk Usage.app"
 	@echo "installed /Applications/Disk Usage.app"
+
+## Zip the signed .app for a GitHub release. ditto keeps the bundle's signature and symlinks
+## intact, which a plain `zip` does not.
+release-zip: app
+	@mkdir -p dist-release
+	@rm -f "$(ZIP)"
+	@ditto -c -k --sequesterRsrc --keepParent "$(APP)" "$(ZIP)"
+	@echo "$(ZIP) ($$(du -h "$(ZIP)" | cut -f1))"
 
 ## Redraw design/icon.png and the tray template, then regenerate the Tauri icon set.
 icons:
