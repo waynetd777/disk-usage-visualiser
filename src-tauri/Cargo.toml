@@ -1,0 +1,52 @@
+[package]
+name = "disk-usage-visualiser"
+version = "0.1.0"
+description = "Nested treemap of what is using the disk on this Mac"
+authors = ["Wayne Davies"]
+edition = "2021"
+
+[lib]
+name = "disk_usage_visualiser_lib"
+# rlib only. The Tauri template's ["staticlib", "cdylib", "rlib"] exists for iOS and Android;
+# this app is macOS-only, and each extra crate type is another full LTO link of the whole
+# program on every build (lesson from backup-manager: 115s -> 21s incremental).
+crate-type = ["rlib"]
+
+# The binary name is what the Dock and Activity Monitor show in `tauri dev`
+# (the bundle's productName only applies to `tauri build`). No spaces allowed here.
+[[bin]]
+name = "DiskUsage"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+tauri-plugin-window-state = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+# The scan: one rayon task per directory, work-stealing across all cores.
+rayon = "1"
+# statfs for the volume's capacity and free space.
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# NSProcessInfo.processName so the unbundled dev binary shows as "Disk Usage" in the app menu.
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSProcessInfo", "NSString", "NSValue"] }
+# To paint the WKWebView's own background before the page's first paint: Tauri's
+# set_background_color does nothing for the webview layer on macOS, so it shows white.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSColor"] }
+
+# Tuned for how this app is built: from source, by the person using it, after every small
+# change. Thin LTO with parallel codegen units instead of the template's fat LTO / 1 unit.
+[profile.release]
+codegen-units = 16
+lto = "thin"
+opt-level = 3
+panic = "abort"
+strip = true
