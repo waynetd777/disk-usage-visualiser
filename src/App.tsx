@@ -191,6 +191,8 @@ export default function App() {
 
   const pct = progress && progress.expected_items ? Math.min(99, Math.round((100 * progress.items) / progress.expected_items)) : null;
   const usedPct = info && info.volume.total ? (100 * info.volume.used) / info.volume.total : 0;
+  // Whole-disk scans only: what statfs counts as used but no folder walk can reach.
+  const notScanned = info && root === "/" && info.scan ? Math.max(0, info.volume.used - info.scan.size) : 0;
   const showFdaBanner = info && !info.full_disk_access && (info.scan?.denied ?? 0) > 0;
 
   return (
@@ -207,6 +209,11 @@ export default function App() {
           <div className="used" title={`${fmt(info.volume.free)} free`}>
             {fmt(info.volume.used)} used of {fmt(info.volume.total)}
             <div className="bar"><i style={{ width: `${usedPct.toFixed(1)}%` }} /></div>
+            {notScanned > 0 && (
+              <div className="unscanned" title="Space the disk reports as used that the folder walk cannot reach: local Time Machine snapshots, purgeable caches, swap, the recovery volume, and folders macOS denied access to.">
+                incl. {fmt(notScanned)} not scanned
+              </div>
+            )}
           </div>
         )}
         <button className="ghost" onClick={() => void chooseFolder()}>Choose folder…</button>

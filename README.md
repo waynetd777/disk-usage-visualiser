@@ -58,7 +58,7 @@ does not have Full Disk Access, a banner says so and opens System Settings.
 
 Apple Silicon Macs, macOS 13 or later. No need to clone anything.
 
-1. **Download** `Disk-Usage-1.0.0-arm64.zip` from the
+1. **Download** `Disk-Usage-1.1.0-arm64.zip` from the
    [latest release](https://github.com/waynetd777/disk-usage-visualiser/releases/latest).
 2. **Unzip it** (double-click) and drag **Disk Usage.app** into your **Applications** folder.
 3. **Clear the download flag.** The app is signed with a self-signed certificate rather than an
@@ -80,7 +80,7 @@ If you have the GitHub CLI, steps 1–3 are:
 
 ```bash
 gh release download --repo waynetd777/disk-usage-visualiser --pattern '*.zip' --dir ~/Downloads
-ditto -xk ~/Downloads/Disk-Usage-1.0.0-arm64.zip /Applications
+ditto -xk ~/Downloads/Disk-Usage-1.1.0-arm64.zip /Applications
 xattr -dr com.apple.quarantine "/Applications/Disk Usage.app"
 ```
 
