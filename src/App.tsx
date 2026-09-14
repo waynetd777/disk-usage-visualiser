@@ -327,7 +327,7 @@ export default function App() {
 
       {menu && (() => {
         const v = menu.block.view;
-        const zoomable = menu.block.kind === "dir" && (v.kids.length > 0 || v.files > 0 || v.more > 0);
+        const zoomable = menu.block.kind !== "more" && (v.kids.length > 0 || v.files > 0 || v.more > 0);
         const style = { left: Math.min(menu.x, window.innerWidth - 230), top: Math.min(menu.y, window.innerHeight - 170) };
         return (
           <div className="menu" style={style}>

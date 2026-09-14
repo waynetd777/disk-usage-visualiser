@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppInfo, Progress, View } from "./types";
+import type { AppInfo, Progress, View, FileEntry } from "./types";
 
 export const api = {
+  files: (path: string) => invoke<FileEntry[]>("get_files", { path }),
   state: () => invoke<AppInfo>("get_state"),
   progress: () => invoke<Progress>("get_progress"),
   /// The subtree under `path`, with folders smaller than `minFraction` of it folded away.

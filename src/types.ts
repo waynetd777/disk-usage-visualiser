@@ -67,3 +67,12 @@ export interface View {
   more_apparent: number;
   more_weight: number;
 }
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  size: number;
+  disk_size: number;
+  modified: number | null;
+  kind: string;
+}

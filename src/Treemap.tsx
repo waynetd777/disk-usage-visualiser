@@ -1,4 +1,6 @@
-import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
+import FileTable from "./FileTable";
+import { useEffect, useRef, useState } from "react";
 import type { View } from "./types";
 import { fmt, fmtN } from "./util";
 
@@ -168,6 +170,7 @@ function draw(b: Block, x: number, y: number, w: number, h: number, out: HTMLEle
 
 export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const [filesHost, setFilesHost] = useState<HTMLElement | null>(null);
   const tipRef = useRef<HTMLDivElement>(null);
   const cbs = useRef({ onZoom, onReveal, onContext });
   cbs.current = { onZoom, onReveal, onContext };
@@ -176,6 +179,7 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
     const map = ref.current;
     if (!map) return;
     const render = () => {
+      setFilesHost(null);
       registry.clear();
       map.innerHTML = "";
       const W = map.clientWidth, H = map.clientHeight;
@@ -194,6 +198,8 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
         const gr = r.x + r.w < W - 0.5 ? GAP / 2 : 0, gb = r.y + r.h < H - 0.5 ? GAP / 2 : 0;
         draw(r.item.block, r.x + gx, r.y + gy, r.w - gx - gr, r.h - gy - gb, map, `${i++}`);
       }
+      const host = map.querySelector<HTMLElement>(":scope > .files");
+      if (host) { host.classList.add("file-container"); setFilesHost(host); }
     };
     render();
     const ro = new ResizeObserver(render);
@@ -219,7 +225,7 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
     const hit = blockAt(e.target);
     if (!hit) return;
     if (e.metaKey) { cbs.current.onReveal(hit.b.view.path); return; }
-    if (hit.b.kind === "dir" && hit.el.classList.contains("zoom")) cbs.current.onZoom(hit.b.view.path);
+    if (hit.b.kind === "files" || (hit.b.kind === "dir" && hit.el.classList.contains("zoom"))) cbs.current.onZoom(hit.b.view.path);
   };
 
   const onContextMenu = (e: React.MouseEvent) => {
@@ -242,7 +248,7 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
       html = `<b>${blockTitle(b)} directly in ${esc(v.name)}</b><div class="p">${esc(v.path)}</div><div class="r"><span>On disk</span><b>${fmt(v.loose_size)}</b>` +
         (v.cloud ? `<span>In cloud</span><b>${fmt(v.loose_apparent)}</b>` : "") +
         `<span>Share of ${esc(v.name)}</span><b>${v.size ? Math.round((100 * v.loose_size) / v.size) : 0}%</b></div>` +
-        `<div class="hint">⌘-click or right-click to reveal ${esc(v.name)} in Finder</div>`;
+        `<div class="hint">Click to zoom in · ⌘-click or right-click to reveal ${esc(v.name)} in Finder</div>`;
     } else if (b.kind === "more") {
       html = `<b>${blockTitle(b)} in ${esc(v.name)}</b><div class="p">${esc(v.path)}</div><div class="r"><span>On disk</span><b>${fmt(v.more_size)}</b>` +
         `<span>Share of ${esc(v.name)}</span><b>${v.size ? Math.round((100 * v.more_size) / v.size) : 0}%</b></div>` +
@@ -270,7 +276,8 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
 
   return (
     <>
-      <div className="map" ref={ref} onClick={onClick} onContextMenu={onContextMenu} onMouseMove={onMove} onMouseLeave={() => { if (tipRef.current) tipRef.current.hidden = true; }} />
+      <div className="map" ref={ref} onClick={onClick} onContextMenu={onContextMenu} onMouseMoveCapture={e => { if ((e.target as HTMLElement).closest(".file-list") && tipRef.current) tipRef.current.hidden = true; }} onMouseMove={onMove} onMouseLeave={() => { if (tipRef.current) tipRef.current.hidden = true; }} />
+      {filesHost && createPortal(<FileTable key={tree.path} path={tree.path} onReveal={onReveal} />, filesHost)}
       <div className="tip" ref={tipRef} hidden />
     </>
   );

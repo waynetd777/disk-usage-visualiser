@@ -183,3 +183,23 @@ code, pre, .mono { font-family: var(--mono); font-size: 12px; }
   .spinner, .pill.info::before, .scan .bar.indet i { animation: none; }
   .scan .bar i { transition: none; }
 }
+
+.blk.files { cursor: pointer; }
+.blk.file-container { cursor: default; display: flex; flex-direction: column; }
+.blk.file-container > .hd { flex: none; }
+.file-list { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; color: var(--text); background: var(--panel); overflow: hidden; }
+.file-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); }
+.file-toolbar input { flex: 1; min-width: 80px; width: 100%; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); padding: 6px 9px; user-select: text; }
+.file-toolbar span, .file-note { font-size: 11px; color: var(--muted); }
+.file-scroll { flex: 1; min-height: 0; overflow: auto; }
+.file-list table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 12px; text-align: left; white-space: nowrap; }
+.file-list th { position: sticky; top: 0; z-index: 1; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+.file-list th button { border: 0; background: transparent; padding: 7px 10px; width: 100%; text-align: left; font-weight: 600; }
+.file-list td { padding: 5px 10px; font-variant-numeric: tabular-nums; }
+.file-list td:first-child { max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+.file-list tr:nth-child(even) { background: var(--panel-2); }
+.file-list tbody tr:hover { background: var(--accent-soft); }
+.file-reveal { background: transparent; border: 0; color: var(--accent); }
+.file-action-label { padding: 0 10px; }
+.file-note { padding: 6px 10px; border-top: 1px solid var(--border); }
+.file-message { padding: 20px; color: var(--muted); white-space: normal; }

@@ -1,3 +1,4 @@
+mod files;
 mod cache;
 mod scan;
 mod volume;
@@ -329,6 +330,7 @@ pub fn run() {
             get_state,
             get_progress,
             get_tree,
+            files::get_files,
             start_scan,
             stop_scan,
             reveal,

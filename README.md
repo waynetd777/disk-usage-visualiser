@@ -19,9 +19,15 @@ Built with Tauri 2, React and Rust.
 - **Cloud folders** (OneDrive, iCloud Drive: anything under `~/Library/CloudStorage` or
   `~/Library/Mobile Documents`) carry a double edge and show two numbers: what is on disk and what
   is in the cloud.
-- **Click a block to zoom in**; the breadcrumb, Esc or ⌘↑ take you back up, and the ‹ › buttons
+- **Click a folder block to zoom in.** Clicking its grey loose-files block opens the same folder.
+  The breadcrumb, Esc or ⌘↑ take you back up, and the ‹ › buttons
   (⌘[ and ⌘]) step back and forward through where you have been. Hover for the full path, sizes,
   item count and share of the parent.
+- **Browse individual files** in the current folder's files box, which fills the map area when
+  the folder contains only files. A Finder-style table lists Name, Date Modified, Size, On Disk
+  and Kind. Search by filename using the box at the top, click a column heading to sort, and
+  double-click a file or use its arrow to reveal it in Finder. Search covers files directly in
+  this folder; it does not search subfolders.
 - **Reveal in Finder**: the arrow on a block's header, ⌘-click on the block, right-click for a menu
   (Reveal in Finder, Zoom in, Copy path, Get Info…), or the arrow beside the breadcrumb for the
   folder on screen. ⌘⇧R does the same.
@@ -51,6 +57,10 @@ The scan total is smaller than the volume's "used" figure in the sidebar: that f
 the filesystem and includes local Time Machine snapshots, purgeable space and folders the walk
 skips or cannot read.
 
+The file table reads current file metadata when opened, so it can differ from the last scanned
+totals in the map. **Size** is the file's length; **On Disk** is its allocated disk space. Listing
+files does not read their contents or download online-only cloud files.
+
 Folders the app is not allowed to read are skipped and counted. If any were skipped and the app
 does not have Full Disk Access, a banner says so and opens System Settings.
 
@@ -58,7 +68,7 @@ does not have Full Disk Access, a banner says so and opens System Settings.
 
 Apple Silicon Macs, macOS 13 or later. No need to clone anything.
 
-1. **Download** `Disk-Usage-1.1.0-arm64.zip` from the
+1. **Download** `Disk-Usage-1.2.0-arm64.zip` from the
    [latest release](https://github.com/waynetd777/disk-usage-visualiser/releases/latest).
 2. **Unzip it** (double-click) and drag **Disk Usage.app** into your **Applications** folder.
 3. **Clear the download flag.** The app is signed with a self-signed certificate rather than an
@@ -80,7 +90,7 @@ If you have the GitHub CLI, steps 1–3 are:
 
 ```bash
 gh release download --repo waynetd777/disk-usage-visualiser --pattern '*.zip' --dir ~/Downloads
-ditto -xk ~/Downloads/Disk-Usage-1.1.0-arm64.zip /Applications
+ditto -xk ~/Downloads/Disk-Usage-1.2.0-arm64.zip /Applications
 xattr -dr com.apple.quarantine "/Applications/Disk Usage.app"
 ```
 
@@ -131,6 +141,8 @@ DU_TIMING=1 "/Applications/Disk Usage.app/Contents/MacOS/DiskUsage"
 | Cached scans, recent roots, last root | `~/Library/Application Support/Disk Usage Visualiser/` |
 | The scanner | `src-tauri/src/scan.rs` |
 | The treemap | `src/Treemap.tsx` |
+| The searchable file table | `src/FileTable.tsx` |
+| File metadata listing | `src-tauri/src/files.rs` |
 | Icon artwork | `design/icon.png` and `src-tauri/icons/tray@2x.png`, drawn by `tools/make_icons.py` |
 
 ## Licence
