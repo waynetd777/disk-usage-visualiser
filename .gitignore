@@ -8,12 +8,15 @@ src-tauri/gen/schemas
 .vscode/*
 !.vscode/extensions.json
 
-# Claude Code / Codex scaffolding - this repo is public, and these are
-# working notes about this machine and its owner, not project documentation.
-/.claude
-/.codex
-/CLAUDE.md
-/AGENTS.md
+# Claude Code / Codex scaffolding. This repo is public, so anything about this
+# machine or its owner stays out: per-machine slash commands, skills and local
+# settings. The four files sift generates are not that — CLAUDE.md, AGENTS.md
+# and the two hook registrations hold its stanza and wiring, the same text
+# that is public in the sift repo itself — so a clone gets them.
+/.claude/*
+!/.claude/settings.json
+/.codex/*
+!/.codex/hooks.json
 
 # Release artefacts (attached to GitHub releases, not tracked)
 dist-release
