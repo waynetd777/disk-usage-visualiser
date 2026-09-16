@@ -241,6 +241,17 @@ def staged_files(root: Path) -> List[str]:
     return _split_z(proc.stdout) if proc.returncode == 0 else []
 
 
+def staged_text(root: Path, path: str) -> Optional[str]:
+    """Text for ``path`` exactly as the index will commit it.
+
+    Privacy lint at pre-commit time must inspect the index, not the working
+    tree: a secret can be staged and then removed locally without updating the
+    staged copy. ``git show :path`` also covers newly added files.
+    """
+    proc = run(root, ["show", ":" + path])
+    return proc.stdout if proc.returncode == 0 else None
+
+
 def commit_contents(root: Path, include_unstaged: bool = False) -> List[str]:
     """Paths this commit will carry, asked of git rather than inferred.
 

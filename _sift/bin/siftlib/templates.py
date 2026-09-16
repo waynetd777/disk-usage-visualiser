@@ -37,10 +37,11 @@ MANIFEST: List[Tuple[str, str, str]] = [
     ("sift/.siftignore", "{dir}/.siftignore", "copy-if-absent"),
     ("sift/.gitignore", "{dir}/.gitignore", "copy-if-absent"),
     ("claude/settings.hooks.json", ".claude/settings.json", "merge-json-hooks"),
+    ("codex/hooks.json", ".codex/hooks.json", "merge-json-hooks"),
     ("stanza/gitattributes", ".gitattributes", "append-stanza-once"),
     ("stanza/gitignore", ".gitignore", "append-stanza-once"),
     ("stanza/CLAUDE.md", "CLAUDE.md", "marker-block"),
-    ("stanza/CLAUDE.md", "AGENTS.md", "marker-block-if-present"),
+    ("stanza/CLAUDE.md", "AGENTS.md", "marker-block"),
 ]
 
 GITHOOKS: List[Tuple[str, str]] = [

@@ -22,7 +22,7 @@ EVENT = "PreToolUse"
 
 
 def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
-    from siftlib import ledger, scan as scan_mod, session as session_mod
+    from siftlib import gitutil, ledger, scan as scan_mod, session as session_mod
     from siftlib import symbols as sym_mod, util
 
     tool_input = h.tool_input()
@@ -46,7 +46,14 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
         return None
 
     scan = util.read_json(h.ctx.scan_json, default={}) or {}
-    rec = (scan.get("files") or {}).get(rel) or {}
+    rec = dict((scan.get("files") or {}).get(rel) or {})
+    # The scan is a steering cache, not proof that the worktree is unchanged.
+    # Duplicate denial must compare the content about to be read with the
+    # content previously seen, including edits made since the last scan.
+    if rec:
+        current_blob = gitutil.short_blob(gitutil.hash_object(h.ctx.root, rel))
+        if current_blob:
+            rec["blob"] = current_blob
     desc = (scan_mod.load_descriptions(h.ctx).get(rel) or {}).get("desc", "")
     tokens = int(rec.get("tokens", 0) or 0)
 
@@ -69,7 +76,8 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     # what `mutate` is for (OpenWolf #83).
     def change(state: Dict[str, Any]) -> None:
         seen = (state.get("files_read") or {}).get(rel)
-        duplicate = bool(seen) and seen.get("blob") == rec.get("blob") and rec.get("blob")
+        duplicate = (bool(seen) and not seen.get("ranged", True)
+                     and seen.get("blob") == rec.get("blob") and rec.get("blob"))
         if duplicate and not h.subagent and mode != "off":
             if (mode == "deny" and tokens > 0 and not seen.get("denied_once")
                     and not seen.get("compacted")):
@@ -135,6 +143,7 @@ def _record_read(state: Dict[str, Any], rel: str, rec: Dict[str, Any], tokens: i
     entry["count"] = int(entry.get("count", 0)) + 1
     entry["tokens"] = tokens or entry.get("tokens", 0)
     entry["blob"] = rec.get("blob", entry.get("blob", ""))
+    entry["ranged"] = False
     state["files_read"][rel] = entry
 
 

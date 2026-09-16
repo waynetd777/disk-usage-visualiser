@@ -1,4 +1,4 @@
-"""Shared hook plumbing: stdin, stdout, fail-open, subagent detection.
+"""Shared Claude Code and Codex hook plumbing.
 
 Contract (BUILD-SPEC 10.3): a hook reads one JSON object on stdin, writes at
 most one JSON object on stdout, and always exits 0. `run()` catches everything,

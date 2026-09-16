@@ -196,8 +196,14 @@ def run(ctx: Ctx, cfg: Config, fast: bool = False,
     # Not "every page": there are no pages. Anything committed under the sift directory
     # is content a colleague will read, which is the only property
     # these checks care about.
-    for path in sorted(ctx.dir.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in (".md", ".jsonl"):
+    if staged_set is None:
+        candidates = [p for p in sorted(ctx.dir.rglob("*")) if p.is_file()]
+    else:
+        # Include paths from the index even when the worktree copy was changed
+        # or removed after staging. The index is the content the hook guards.
+        candidates = [ctx.root / p for p in sorted(staged_set)]
+    for path in candidates:
+        if path.suffix.lower() not in (".md", ".jsonl"):
             continue
         rel_sift = path.relative_to(ctx.dir).as_posix()
         if rel_sift.startswith(("local/", ".cache/", "bin/")):
@@ -205,7 +211,10 @@ def run(ctx: Ctx, cfg: Config, fast: bool = False,
         rel = ctx.dir_name + "/" + rel_sift
         if not selected(rel):
             continue
-        text = util.read_text(path)
+        text = (gitutil.staged_text(ctx.root, rel)
+                if staged_set is not None else util.read_text(path))
+        if text is None:  # staged deletion: no content will enter the commit
+            continue
         if not text:
             continue
         lines = text.splitlines()

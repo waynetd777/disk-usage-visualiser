@@ -44,16 +44,22 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
 
     interval = int(h.cfg.get("context", "reinjection_interval",
                              default=DEFAULT_INTERVAL) or 0)
-    if interval <= 0 or h.subagent:
+    if h.subagent:
         return None
 
     due = {"now": False}
+    edited = _edited_paths(h)
 
     def change(state: Dict[str, Any]) -> None:
+        if edited:
+            files = state.setdefault("files_edited", [])
+            for path in edited:
+                if path not in files:
+                    files.append(path)
         count = int(state.get("tool_calls", 0) or 0) + 1
         state["tool_calls"] = count
         last = int(state.get("rules_reinjected_at", 0) or 0)
-        if count - last >= interval:
+        if interval > 0 and count - last >= interval:
             state["rules_reinjected_at"] = count
             due["now"] = True
 
@@ -76,6 +82,32 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     session_mod.mutate(h.ctx, h.session_id,
                        lambda s: session_mod.charge(h.ctx, s, text))
     return _common.additional_context("PostToolUse", text)
+
+
+def _edited_paths(h: "_common.HookCtx") -> List[str]:
+    """Repo-relative paths changed by Claude editing tools or Codex apply_patch."""
+    tool_name = str(h.payload.get("tool_name") or "")
+    if tool_name not in ("Edit", "Write", "NotebookEdit", "apply_patch"):
+        return []
+    tool_input = h.tool_input()
+    raw_paths: List[str] = []
+    direct = str(tool_input.get("file_path") or tool_input.get("path")
+                 or tool_input.get("notebook_path") or "")
+    if direct:
+        raw_paths.append(direct)
+    if tool_name == "apply_patch":
+        command = str(tool_input.get("command") or "")
+        raw_paths.extend(re.findall(
+            r"^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$",
+            command, re.MULTILINE))
+        raw_paths.extend(re.findall(r"^\*\*\* Move to: (.+?)\s*$",
+                                    command, re.MULTILINE))
+    out: List[str] = []
+    for raw in raw_paths:
+        rel = h.rel(raw)
+        if h.ctx.contains(rel) and not h.ctx.is_sift_path(rel) and rel not in out:
+            out.append(rel)
+    return out
 
 
 def top_rules(ctx: "Any", limit: int = MAX_RULES) -> List[str]:

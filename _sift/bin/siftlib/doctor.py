@@ -17,6 +17,10 @@ from . import gitutil, hookcheck, openwolf, templates, util
 from .config import Config
 from .paths import Ctx
 
+# A complete registration, per agent, as `templates/claude/settings.hooks.json`
+# and `templates/codex/hooks.json` ship it.
+HOOK_ENTRIES = {"Claude": 8, "Codex": 6}
+
 TIME_SENSITIVE = re.compile(
     r"(?i)\bas of\b|\bcurrently\b|\b(january|february|march|april|may|june|july|"
     r"august|september|october|november|december)\s+20\d\d\b")
@@ -138,16 +142,34 @@ def run(ctx: Ctx, cfg: Config, fix: bool = False,
                    "move your own hook to .githooks/pre-commit.local and re-run "
                    "`sift install`, which wraps it instead of appending")
 
-    settings = ctx.root / ".claude" / "settings.json"
-    registered = 0
-    data = util.read_json(settings, default=None)
-    if isinstance(data, dict):
-        for entries in (data.get("hooks") or {}).values():
-            for entry in entries or []:
-                if templates.hook_entry_is_ours(entry, ctx.dir_name):
-                    registered += 1
-    _check(checks, "hooks-registered", registered >= 8,
-           "{} hook entries registered".format(registered),
+    # Each agent is judged on its own count. An `or` across the two read as
+    # healthy whenever either side was complete, so a Claude registration that
+    # had been wiped stayed invisible for as long as Codex's six entries lived.
+    registered: Dict[str, int] = {}
+    absent: List[str] = []
+    for agent, settings in (("Claude", ctx.root / ".claude" / "settings.json"),
+                            ("Codex", ctx.root / ".codex" / "hooks.json")):
+        count = 0
+        data = util.read_json(settings, default=None)
+        if isinstance(data, dict):
+            for entries in (data.get("hooks") or {}).values():
+                for entry in entries or []:
+                    if templates.hook_entry_is_ours(entry, ctx.dir_name):
+                        count += 1
+        registered[agent] = count
+        # No file at all is an agent this repo does not run, which is nothing
+        # to report. A file with too few entries is hooks that have gone.
+        if not settings.is_file():
+            absent.append(agent)
+    short = [a for a in registered
+             if a not in absent and registered[a] < HOOK_ENTRIES[a]]
+    detail = ", ".join(
+        "no {} hooks file".format(agent) if agent in absent
+        else "{} of {} {} hook entries".format(
+            registered[agent], HOOK_ENTRIES[agent], agent)
+        for agent in registered)
+    _check(checks, "hooks-registered",
+           len(absent) < len(registered) and not short, detail,
            "run install.py to merge the hook block")
 
     # Registered is not the same as delivered. The transcript records every

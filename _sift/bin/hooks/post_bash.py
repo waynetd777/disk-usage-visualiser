@@ -3,13 +3,12 @@
 
 Two jobs, both about tokens, and neither can be done anywhere else.
 
-**Governance.** `updatedToolOutput` replaces what the model sees, and this is
-the only hook event that can do it -- `PreToolUse` would have to rewrite the
-*command*, which rides `hookSpecificOutput` and can auto-approve a call the
-user never saw. That is a permission bypass, not an optimisation, so the
-rewrite happens after the command has run on its real output. The response
-object is mirrored and only `stdout` is changed: a shape mismatch makes the
-harness drop the replacement without saying so. `stderr` is never touched.
+**Governance.** Result replacement happens after the command runs: Claude Code
+uses `updatedToolOutput`, while Codex uses its documented `continue: false`
+and `stopReason` feedback. `PreToolUse` would have to rewrite the *command*,
+which can auto-approve a call the user never saw. That is a permission bypass,
+not an optimisation. On Claude, the response object is mirrored and only
+`stdout` changes; `stderr` is never touched.
 
 **Read tracking.** `pre_read` watches the Read tool, which is not where
 duplicate reads happen: OpenWolf measured 140 of 144 of them arriving as
@@ -41,7 +40,16 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     note = "\n".join(n for n in (note, flood_note) if n) or None
     if governed:
         if note:
-            governed["hookSpecificOutput"]["additionalContext"] = note
+            hook_out = governed.get("hookSpecificOutput")
+            if isinstance(hook_out, dict):
+                hook_out["additionalContext"] = note
+            else:
+                # Codex's shape carries no `additionalContext`: its condensed
+                # text travels as `stopReason`, so a note left anywhere else
+                # is dropped, and the duplicate-read warning was the one that
+                # went missing whenever governance also fired.
+                governed["stopReason"] = "\n\n".join(
+                    p for p in (str(governed.get("stopReason") or ""), note) if p)
         return governed
     if note:
         return _common.additional_context("PostToolUse", note)
@@ -61,7 +69,7 @@ def _track_read(h: "_common.HookCtx", command: str) -> Optional[str]:
     if read is None:
         return None
     response = h.payload.get("tool_response")
-    stdout = (response or {}).get("stdout") if isinstance(response, dict) else None
+    stdout = _stdout(response)
     if not isinstance(stdout, str) or not stdout:
         return None
 
@@ -128,6 +136,18 @@ def _estimate(text: str) -> int:
     return govern.estimate_tokens(text)
 
 
+def _stdout(response: Any) -> Optional[str]:
+    """Bash output across Claude Code and Codex hook payloads."""
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict):
+        for key in ("stdout", "output", "content"):
+            value = response.get(key)
+            if isinstance(value, str):
+                return value
+    return None
+
+
 def _govern(h: "_common.HookCtx", command: str):
     """Returns `(rewrite, note)`, either of which may be None.
 
@@ -144,10 +164,8 @@ def _govern(h: "_common.HookCtx", command: str):
     if not (advise or enabled) or not command:
         return None, None
     response = h.payload.get("tool_response")
-    if not isinstance(response, dict):
-        return None, None
-    stdout = response.get("stdout")
-    if not isinstance(stdout, str) or not stdout:
+    stdout = _stdout(response)
+    if not stdout:
         return None, None
 
     # Cheap checks before the file write: most commands are neither a
@@ -191,10 +209,31 @@ def _govern(h: "_common.HookCtx", command: str):
                   family=result.family, original_tokens=result.original_tokens,
                   entered_tokens=result.entered_tokens, preserved=bool(log))
     # Mirror the object; change stdout and nothing else.
+    if _is_codex(h):
+        # Codex has no updatedToolOutput field. Its documented way to replace
+        # a completed tool result with hook feedback is continue:false plus
+        # stopReason; the model then continues from the condensed text.
+        return ({"continue": False, "stopReason": result.text}, note)
     updated = dict(response)
     updated["stdout"] = result.text
     return ({"hookSpecificOutput": {"hookEventName": "PostToolUse",
                                     "updatedToolOutput": updated}}, note)
+
+
+def _is_codex(h: "_common.HookCtx") -> bool:
+    """Codex, on the evidence rather than on the absence of Claude's fields.
+
+    `CLAUDE_PROJECT_DIR` settles it when it is set: the Claude hook command
+    this tool installs is written in terms of that variable, so a Claude hook
+    cannot have reached this process without it. Without that guard, the day
+    Claude Code adds a `model` field to a tool payload -- other events already
+    carry model metadata -- every Claude session would silently be handed
+    Codex's `continue`/`stopReason` shape, which Claude Code does not read,
+    and governance would stop replacing output with nothing said about it.
+    """
+    if os.environ.get("CLAUDE_PROJECT_DIR"):
+        return False
+    return bool(h.payload.get("turn_id") or h.payload.get("model"))
 
 
 def _flood_note(h: "_common.HookCtx", session_mod, tokens: int) -> Optional[str]:

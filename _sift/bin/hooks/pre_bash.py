@@ -13,8 +13,9 @@ session, because a note on every test run costs more context than it saves.
 What this hook deliberately does *not* do is rewrite the command. Returning
 `updatedInput` rides `hookSpecificOutput` and can auto-approve the call, so the
 user would approve one command and a different one would run. Governance
-happens in `post_bash`, on the real output, where `updatedToolOutput` replaces
-what the model sees without touching the permission gate.
+happens in `post_bash`, on the real output, where the harness's documented
+post-tool replacement shape changes what the model sees without touching the
+permission gate.
 
 The commit nudge that used to live here went with the pages in
 There is nothing left for a commit to have made stale.

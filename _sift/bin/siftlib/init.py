@@ -63,8 +63,6 @@ def scaffold(ctx: Ctx, cfg: Config, githooks: bool = True, skills: bool = True,
         dest = ctx.root / dest_tpl.format(dir=ctx.dir_name)
         text = templates.render(util.read_text(src), subs)
         outcome = _apply(mode, dest, text, ctx.dir_name, force)
-        if outcome == "skipped-absent":
-            continue
         bucket = {"created": "created", "merged": "merged",
                   "skipped": "skipped"}[outcome]
         result[bucket].append(ctx.rel(dest))
@@ -81,10 +79,6 @@ def _apply(mode: str, dest: Path, text: str, dir_name: str, force: bool) -> str:
     if mode == "copy-if-absent":
         return templates.apply_copy_if_absent(dest, text, force)
     if mode == "marker-block":
-        return templates.apply_marker_block(dest, text)
-    if mode == "marker-block-if-present":
-        if not dest.exists():
-            return "skipped-absent"
         return templates.apply_marker_block(dest, text)
     if mode == "append-stanza-once":
         return templates.apply_append_stanza_once(dest, text, force)
@@ -121,7 +115,9 @@ def install_githooks(ctx: Ctx, troot: Path, subs: Dict[str, str]) -> Dict[str, A
         kept = dest.with_name(name + ".local")
         if dest.exists():
             current = util.read_text(dest)
-            if "sift" in current:
+            lines = current.splitlines()
+            owned = len(lines) > 1 and lines[1].startswith("# sift:")
+            if owned:
                 # Ours, so it is upgradeable: the wrapper's own header tells
                 # people to edit `<hook>.local` and says this file is rewritten.
                 # Skipping it meant a hook installed once kept whatever it said
