@@ -481,16 +481,19 @@ class App:
         rows = scan_mod.build_map(self.ctx, self.cfg, self.args.target)
         shown = self.truncated(rows, self.args.top)
         if not self.out.json_mode:
+            from siftlib import symbols as sym_mod
+            dir_rows, here = scan_mod.rollup_map(rows, self.args.target)
             table = []
-            for r in rows[:self.args.top]:
-                syms = ""
-                if r["symbols"]:
-                    from siftlib import symbols as sym_mod
-                    syms = sym_mod.format_hint(r["symbols"], 3)
+            for d in dir_rows:
+                noun = "file" if d["files"] == 1 else "files"
+                table.append([d["path"] + "/", str(d["tokens"]),
+                              "{} {}, {} described".format(d["files"], noun, d["described"])])
+            for r in here[:self.args.top]:
+                syms = sym_mod.format_hint(r["symbols"], 3) if r["symbols"] else ""
                 table.append([r["path"], str(r["tokens"]),
                               (r["desc"] or syms or "")[:88]])
             self.out.table(table, ["path", "tok", "description"])
-            self.more_note(len(rows), self.args.top)
+            self.more_note(len(here), self.args.top)
         self.out.emit(shown)
         return EXIT_OK
 

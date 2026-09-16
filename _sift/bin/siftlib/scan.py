@@ -252,3 +252,32 @@ def build_map(ctx: Ctx, cfg: Config, pathspec: str) -> List[dict]:
             "symbols": rec.get("symbols", []),
         })
     return rows
+
+
+def rollup_map(rows: List[dict], pathspec: str) -> Tuple[List[dict], List[dict]]:
+    """Split map rows into an orientation view: one aggregate per immediate
+    child directory of the target, plus the files that live directly at this
+    level. `map .` on a large tree lists hundreds of files (or hides all but
+    `--top` of them); the rollup is the same tree in a handful of rows, and
+    you drill in by naming a child directory. The flat rows stay the JSON
+    contract; this only shapes the human view."""
+    spec = (pathspec or ".").rstrip("/")
+    prefix = "" if spec in ("", ".") else spec + "/"
+    dirs: Dict[str, List[int]] = {}
+    here: List[dict] = []
+    for r in rows:
+        path = r["path"]
+        rel = path[len(prefix):] if prefix and path.startswith(prefix) else path
+        if "/" in rel:
+            name = rel.split("/", 1)[0]
+            agg = dirs.setdefault(name, [0, 0, 0])  # files, tokens, described
+            agg[0] += 1
+            agg[1] += r.get("tokens", 0)
+            if r.get("desc"):
+                agg[2] += 1
+        else:
+            here.append(r)
+    dir_rows = [{"path": prefix + name, "files": a[0], "tokens": a[1], "described": a[2]}
+                for name, a in sorted(dirs.items())]
+    here.sort(key=lambda r: r["path"])
+    return dir_rows, here
