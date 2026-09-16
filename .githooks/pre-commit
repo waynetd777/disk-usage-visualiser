@@ -1,0 +1,12 @@
+#!/bin/sh
+# sift: advisory sift lint on staged sift-directory files. Only W15, W16 and W19
+# block a commit — a secret, a path outside the repo, or a tracked local/ file.
+W=_sift
+[ -d "$W/bin" ] || exit 0
+git diff --cached --name-only -z | tr '\0' '\n' | grep -q "^$W/" || exit 0
+python3 -I -S "$W/bin/sift.py" lint --staged --fast
+rc=$?
+if [ "$rc" -eq 1 ]; then
+  python3 -I -S "$W/bin/sift.py" --json lint --staged --only W15,W16,W19 | grep -q '"code": "W1[569]"' && { echo "sift: a secret, an out-of-repo path, or a committed local/ file — commit blocked"; exit 1; }
+fi
+exit 0

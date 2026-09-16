@@ -1,0 +1,7 @@
+# sift: derived state and private notes never leave this machine
+.cache/
+local/
+
+# Python byte-code from running bin/sift.py. sift's own, so sift ignores it
+# rather than relying on the repo having a rule.
+__pycache__/

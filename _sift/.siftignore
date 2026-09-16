@@ -1,0 +1,38 @@
+# Tooling that installs itself into the repo. Documenting it is not the
+# point of the sift directory, and leaving it in would skew the churn ratings.
+.claude/
+.githooks/
+.github/
+
+# Machine-written state churns far harder than anything a person edits, so it
+# would dominate the churn ratings and point attention at the tooling
+# instead of the code.
+
+node_modules/
+dist/
+build/
+out/
+coverage/
+.next/
+.nuxt/
+.turbo/
+.terraform/
+target/
+vendor/
+__pycache__/
+*.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+poetry.lock
+*.min.js
+*.min.css
+*.map
+*.snap
+**/__snapshots__/
+**/migrations/**
+*.generated.*
+*.pb.go
+*_pb2.py
+# sift: OpenWolf's own state, kept out of the churn ratings
+.wolf/

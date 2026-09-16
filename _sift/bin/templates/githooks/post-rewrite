@@ -1,0 +1,7 @@
+#!/bin/sh
+# sift: heal derived scan state after history moves.
+W={{dir}}
+[ -d "$W/bin" ] || exit 0
+sh "$W/bin/hook.sh" _noop >/dev/null 2>&1 || exit 0   # preflight only
+python3 -I -S "$W/bin/sift.py" --quiet scan >/dev/null 2>&1
+exit 0

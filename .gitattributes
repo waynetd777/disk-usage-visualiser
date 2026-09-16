@@ -1,0 +1,4 @@
+# sift: append-only files merge by union
+_sift/journal.jsonl    merge=union
+_sift/files.jsonl      merge=union
+_sift/decisions.jsonl  merge=union

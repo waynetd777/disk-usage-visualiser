@@ -1,0 +1,4 @@
+# sift: append-only files merge by union
+{{dir}}/journal.jsonl    merge=union
+{{dir}}/files.jsonl      merge=union
+{{dir}}/decisions.jsonl  merge=union

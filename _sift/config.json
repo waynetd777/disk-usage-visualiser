@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "dir_name": "_sift",
+  "governance": {
+    "advise": true,
+    "enabled": false,
+    "threshold_tokens": 2000,
+    "max_log_bytes": 4194304,
+    "cache_budget_bytes": 67108864,
+    "head_lines": 80,
+    "tail_lines": 30,
+    "grep_per_file": 3,
+    "abandon_ratio": 0.7
+  },
+  "context": {
+    "reinjection_interval": 25
+  },
+  "store": {
+    "total_token_budget": 60000,
+    "sentence_per_line": true
+  },
+  "scan": {
+    "symbol_min_tokens": 500,
+    "symbol_max_count": 30,
+    "symbol_max_bytes": 262144,
+    "binary_extensions": [
+      ".png",
+      ".jpg",
+      ".jpeg",
+      ".gif",
+      ".webp",
+      ".ico",
+      ".pdf",
+      ".woff",
+      ".woff2",
+      ".ttf",
+      ".otf",
+      ".zip",
+      ".gz",
+      ".jar",
+      ".class",
+      ".pyc",
+      ".so",
+      ".dylib",
+      ".dll",
+      ".exe",
+      ".bin",
+      ".ipynb"
+    ]
+  },
+  "hot": {
+    "since": "6.months"
+  },
+  "hooks": {
+    "enabled": true,
+    "session_budget_tokens": 2000,
+    "session_start": true,
+    "pre_read": true,
+    "post_read": true,
+    "post_tool": true,
+    "pre_bash": true,
+    "post_bash": true,
+    "pre_compact": true,
+    "session_end": true,
+    "duplicate_read_mode": "warn"
+  },
+  "openwolf": {
+    "reviewed": []
+  },
+  "setup": {
+    "describe_top": 25,
+    "check_upgrade": true
+  },
+  "lint": {
+    "hard_fail": [
+      "W15",
+      "W16",
+      "W19"
+    ],
+    "stale_updated_days": 30
+  },
+  "ci": {
+    "advisory": true
+  }
+}

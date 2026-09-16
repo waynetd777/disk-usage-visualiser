@@ -1,0 +1,13 @@
+name: sift-check
+on: [pull_request]
+permissions:
+  contents: read
+env:
+  SIFT_READONLY: "1"
+jobs:
+  sift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
+      - run: python3 {{dir}}/bin/sift.py --json lint --ci > lint.json; python3 {{dir}}/bin/sift.py lint --ci{{advisory}}
