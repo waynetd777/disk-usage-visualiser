@@ -34,7 +34,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from . import gitutil, ignore, util
+from . import gitutil, ignore, templates, util
 from .config import Config
 from .paths import Ctx
 
@@ -54,9 +54,14 @@ SECRET_PATTERNS = [
     re.compile(r"xox[bap]-[A-Za-z0-9-]+"),
 ]
 
+# The character before the path may be anything that cannot itself be part of
+# a path. Listing the openers instead -- whitespace, quote, paren -- missed the
+# one form a model actually writes in markdown: `` `/Users/wayned/notes` ``
+# passed `lint --staged` clean, and so did `path=/Users/...` and `at: ~/x`,
+# which is a hard-fail privacy check failing open on its normal case.
 ABSOLUTE_PATTERNS = [
-    re.compile(r"(^|[\s\"'(])/(Users|home|Volumes|private|tmp|var)/"),
-    re.compile(r"(^|[\s\"'(])~/"),
+    re.compile(r"(^|[^A-Za-z0-9_./~-])/(Users|home|Volumes|private|tmp|var)/"),
+    re.compile(r"(^|[^A-Za-z0-9_./~-])~/"),
     re.compile(r"C:\\\\Users\\\\"),
     re.compile(r"C:\\Users\\"),
 ]
@@ -223,7 +228,8 @@ def run(ctx: Ctx, cfg: Config, fast: bool = False,
         # its own documentation is noise -- but W15 and W16 still apply there,
         # because a secret in a generated file is still a secret.
         own_docs = rel_sift in ("conventions.md", "README.md")
-        _secret_scan(issues, rel, lines, want, privacy=not own_docs)
+        _secret_scan(issues, rel, lines, want, privacy=not own_docs,
+                     generated=_generated_lines(text) if own_docs else frozenset())
 
         if want("W04") and path.suffix.lower() == ".md":
             fences = _in_fence(lines)
@@ -279,12 +285,30 @@ def _check_code_ref(ctx: Ctx, token: str, tracked: Set[str],
     return None
 
 
+def _generated_lines(text: str) -> "frozenset[int]":
+    """The 0-based line numbers of our own generated marker block.
+
+    Only `conventions.md` and `README.md` have one, and only W16 is waived
+    inside it: the block is byte-identical on every machine by construction, so
+    `/Users/...` in it is an example of the rule rather than a leak from
+    somebody's laptop. Anything a user writes below the end marker is theirs
+    and stays checked -- which is where the marker tells them to write.
+    """
+    before, block, _after = templates.marker_split(text)
+    if block is None:
+        return frozenset()
+    first = before.count("\n")
+    return frozenset(range(first, first + block.count("\n") + 1))
+
+
 def _secret_scan(issues: List[dict], rel: str, lines: Sequence[str],
-                 want, privacy: bool = True) -> None:
+                 want, privacy: bool = True,
+                 generated: "frozenset[int]" = frozenset()) -> None:
     """`privacy=False` for the files we generate ourselves: `conventions.md`
     states the rule, which means spelling out the vocabulary the rule is about.
     A check that fires on its own documentation is noise. W15 and W16 still
-    apply there -- a secret in a generated file is still a secret."""
+    apply there -- a secret in a generated file is still a secret -- except for
+    W16 inside the generated block itself, which `generated` carries."""
     for i, line in enumerate(lines):
         if privacy and want("W20"):
             for pattern in HR_PATTERNS:
@@ -303,7 +327,7 @@ def _secret_scan(issues: List[dict], rel: str, lines: Sequence[str],
                                         "looks like a secret",
                                         "Remove it and rotate the secret"))
                     break
-        if want("W16"):
+        if want("W16") and i not in generated:
             probe = _without_allowed(line)
             for pattern in ABSOLUTE_PATTERNS:
                 if pattern.search(probe):

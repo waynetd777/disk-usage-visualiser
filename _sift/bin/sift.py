@@ -656,6 +656,17 @@ class App:
                     self.out.line(
                         "governance: {}, and nothing went over the threshold "
                         "this period — nothing for it to do.".format(state))
+            if data.get("read_floods"):
+                # The Read tool's floods, beside Bash's. On the first repo
+                # measured they outnumbered the Bash floods five to one.
+                mode = str(self.cfg.get("hooks", "big_read_mode", default="off"))
+                self.out.line(
+                    "reads: {} whole-file read(s) over the threshold ({:,} tokens), "
+                    "{} refused once and given ranges (big_read_mode: {}{})".format(
+                        data["read_floods"], data["read_flood_tokens"],
+                        data["big_reads_denied"], mode,
+                        "" if mode == "deny"
+                        else " -- set it to deny to turn these into ranged reads"))
             cost, saved = data.get("carry_cost") or 0, data.get("carry_saved") or 0
             if cost or saved:
                 # The figures above are what a payload weighed once. These are

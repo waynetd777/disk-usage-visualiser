@@ -67,6 +67,18 @@ DEFAULTS: Dict[str, Any] = {
         "pre_compact": True,
         "session_end": True,
         "duplicate_read_mode": "warn",
+        # A whole-file Read over `big_read_tokens` is where the tokens actually
+        # go: on the first repo governance ran on, Bash flooded three times in
+        # three sessions and the Read tool sixteen to eighteen times, one read
+        # alone near 18,000 tokens, every one of them after `pre_read` had
+        # offered the symbol ranges. `deny` refuses the first whole read of
+        # such a file and hands back the ranges; the second attempt goes
+        # through, so a model that really needs the whole file is delayed one
+        # turn, not blocked. Off by default until it has run on real work --
+        # a refusal costs a round trip, and `read_flood` in the ledger counts
+        # the floods whether or not this is on.
+        "big_read_mode": "off",
+        "big_read_tokens": 2000,
     },
     # Files that mention OpenWolf for a reason that survives the migration --
     # a still-live npm dependency, a guard that names it on purpose. Recorded
@@ -86,6 +98,7 @@ DEFAULTS: Dict[str, Any] = {
 
 ENUMS = {
     ("hooks", "duplicate_read_mode"): {"off", "warn", "deny"},
+    ("hooks", "big_read_mode"): {"off", "deny"},
 }
 
 

@@ -10,6 +10,7 @@ as uncovered source would make `coverage` permanently wrong.
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -34,12 +35,46 @@ def _binary(path: str, binary_exts: Sequence[str]) -> bool:
     return ext in binary_exts
 
 
-def run_scan(ctx: Ctx, cfg: Config, full: bool = False) -> Dict[str, Any]:
-    """Rebuild the scan cache; return the summary `data` for the CLI."""
-    head = gitutil.head(ctx.root)
+def scan_inputs(ctx: Ctx) -> Dict[str, str]:
+    """path -> short blob for every scannable file: what a scan keys on.
+
+    The index as `git ls-files -s` reports it, with the paths git calls modified
+    rehashed from the worktree. `run_scan` walks this to build the cache and
+    `doctor` digests it to ask whether the cache is current, so there is one
+    producer of the answer and the two cannot drift apart.
+    """
     stage = gitutil.ls_files_stage(ctx.root)
     matcher = ignore.load(ctx.siftignore)
     modified = set(gitutil.modified_paths(ctx.root))
+    inputs: Dict[str, str] = {}
+    for path in sorted(stage):
+        if ctx.is_sift_path(path) or matcher.ignored(path):
+            continue
+        blob = stage[path]
+        if path in modified:
+            fresh = gitutil.hash_object(ctx.root, path)
+            if fresh:
+                blob = fresh
+        inputs[path] = gitutil.short_blob(blob)
+    return inputs
+
+
+def inputs_digest(inputs: Dict[str, str]) -> str:
+    """A short digest of the exact `path -> blob` set a scan described.
+
+    HEAD is the wrong key and was the one `doctor` used: a commit of content
+    that was already scanned moves HEAD without invalidating anything, and an
+    uncommitted edit invalidates the cache without moving HEAD. So `cache-scan`
+    went red after every commit and stayed green through every edit.
+    """
+    payload = "".join("{}\t{}\n".format(p, inputs[p]) for p in sorted(inputs))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def run_scan(ctx: Ctx, cfg: Config, full: bool = False) -> Dict[str, Any]:
+    """Rebuild the scan cache; return the summary `data` for the CLI."""
+    head = gitutil.head(ctx.root)
+    inputs = scan_inputs(ctx)
     binary_exts = [e.lower() for e in cfg.get("scan", "binary_extensions", default=[])]
     sym_min = int(cfg.get("scan", "symbol_min_tokens", default=500))
     sym_max_count = int(cfg.get("scan", "symbol_max_count", default=30))
@@ -50,15 +85,7 @@ def run_scan(ctx: Ctx, cfg: Config, full: bool = False) -> Dict[str, Any]:
 
     files: Dict[str, dict] = {}
     changed = 0
-    for path in sorted(stage):
-        if ctx.is_sift_path(path) or matcher.ignored(path):
-            continue
-        blob = stage[path]
-        if path in modified:
-            fresh = gitutil.hash_object(ctx.root, path)
-            if fresh:
-                blob = fresh
-        blob16 = gitutil.short_blob(blob)
+    for path, blob16 in inputs.items():
         prev = prev_files.get(path)
         if not full and prev and prev.get("blob") == blob16:
             files[path] = prev
@@ -85,7 +112,9 @@ def run_scan(ctx: Ctx, cfg: Config, full: bool = False) -> Dict[str, Any]:
 
     data = {
         "version": 1,
+        # `head` is kept for display only; `inputs` is what staleness is judged on.
         "head": head,
+        "inputs": inputs_digest(inputs),
         "scanned": util.now_iso(),
         "churn_since": since,
         "churn": {k: v for k, v in churn.items() if k in files},

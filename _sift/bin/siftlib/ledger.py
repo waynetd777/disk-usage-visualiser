@@ -13,7 +13,11 @@ from .paths import Ctx
 
 EVENTS = ("index_hit", "index_miss", "dup_warned", "dup_denied",
           "ranged_steered", "nudge_commit", "nudge_stop", "injected",
-          "governed", "governed_rerun", "flood_seen")
+          "governed", "governed_rerun", "flood_seen",
+          # The Read channel's floods, counted the way `flood_seen` counts
+          # Bash's: a whole-file read that came back over the threshold, and a
+          # whole-file read `pre_read` refused once and handed ranges for.
+          "read_flood", "big_read_denied")
 
 # There used to be a DEFAULT_AVOIDED_TOKENS = 400 here, added to every event
 # whose size was unknown. It made `tokens_avoided_est` a count wearing a
@@ -71,6 +75,7 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
     gov_original = 0
     gov_entered = 0
     gov_families: Dict[str, int] = {}
+    read_flood_tokens = 0
     for row in util.read_jsonl(ctx.ledger):
         ts = str(row.get("ts", ""))
         if cutoff and ts < cutoff:
@@ -83,11 +88,13 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
             avoided += tokens
         if event == "injected":
             injected += tokens
+        if event == "read_flood":
+            read_flood_tokens += tokens
         at = row.get("at_call")
         sess = str(row.get("session", ""))
         if at is not None:
             spans[sess] = max(spans.get(sess, 0), int(at))
-            if event in ("flood_seen", "injected"):
+            if event in ("flood_seen", "read_flood", "injected"):
                 # Cost: these tokens entered the conversation and stayed.
                 carried.append((sess, int(at), tokens, "cost"))
             elif event == "governed":
@@ -124,6 +131,13 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
         # `enabled` off this is the whole point: zero here after a week of real
         # work is the evidence that condensation would buy nothing.
         "floods_seen": counts["flood_seen"],
+        # The same count for the Read tool, which is where the first real
+        # sessions put most of the tokens: whole-file reads that came back over
+        # the threshold, what they weighed, and how many `big_read_mode: deny`
+        # turned into ranged reads.
+        "read_floods": counts["read_flood"],
+        "read_flood_tokens": read_flood_tokens,
+        "big_reads_denied": counts["big_read_denied"],
         # Size times the turns that followed, which is what a token in the
         # context actually costs. Kept as two numbers because netting them
         # hides the whole point: `carry_cost` is what entered and stayed,

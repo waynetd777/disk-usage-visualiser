@@ -188,11 +188,28 @@ def run(ctx: Ctx, cfg: Config, fix: bool = False,
                "not verifiable (no transcript, or its format has moved)")
 
     # --- caches ------------------------------------------------------------
+    # Judged on what the scan keyed on, not on HEAD. Comparing HEAD turned this
+    # red after every commit -- including commits of content the scan had
+    # already described -- and left it green through an uncommitted edit, which
+    # is the case that actually makes the cache wrong. A check that is red most
+    # of the time trains people to ignore it. `scan.scan_inputs` is the single
+    # producer of the keyed set; this side only digests it (D-20260917-01).
+    from . import scan as scan_mod
     scan = util.read_json(ctx.scan_json, default=None)
-    head = gitutil.head(ctx.root)
-    _check(checks, "cache-scan", isinstance(scan, dict) and scan.get("head") == head,
-           "scan cache at {}".format((scan or {}).get("head", "(absent)")),
-           "run `sift scan`")
+    recorded = (scan or {}).get("inputs") if isinstance(scan, dict) else None
+    shown = (scan or {}).get("head", "(absent)") if isinstance(scan, dict) else "(absent)"
+    current = scan_mod.inputs_digest(scan_mod.scan_inputs(ctx))
+    fresh = bool(recorded) and recorded == current
+    if not isinstance(scan, dict):
+        detail = "no scan cache"
+    elif not recorded:
+        # A cache written before the digest existed. Unjudgeable, so stale.
+        detail = "scan cache at {} predates the content digest".format(shown)
+    elif fresh:
+        detail = "scan cache at {} matches the index and worktree".format(shown)
+    else:
+        detail = "scan cache at {} describes different content".format(shown)
+    _check(checks, "cache-scan", fresh, detail, "run `sift scan`")
 
     # --- OpenWolf ----------------------------------------------------------
     found = openwolf.detect(ctx.root)

@@ -26,6 +26,23 @@ TRANSCRIPTS = Path("~/.claude/projects").expanduser()
 _HOOK_KINDS = ("hook_success", "hook_non_blocking_error", "hook_error")
 
 
+def project_dir_name(root: Path) -> str:
+    """The exact directory name Claude Code gives a project under `~/.claude/projects`.
+
+    It mangles the absolute path by replacing every character outside
+    `[A-Za-z0-9]` with `-`, so the leading `/` becomes a leading `-` and `/`,
+    `.` and `_` all flatten to the same character:
+    `/Users/x/.tools/wf_1` becomes `-Users-x--tools-wf-1`.
+
+    Matching this exactly matters twice. A substring test on a partially
+    mangled stem matched any sibling whose path merely starts with this one --
+    `/p/repo` matched `/p/repo-eval`'s directory -- and it matched nothing at
+    all for a path containing `_` or `.`, because the harness mangles those and
+    a `/`-only replacement does not.
+    """
+    return re.sub(r"[^A-Za-z0-9]", "-", str(root))
+
+
 def transcript_for(session_id: str, root: Optional[Path] = None) -> Optional[Path]:
     """The transcript file for a session, wherever the harness put it."""
     if not session_id or not re.match(r"^[\w-]{4,}$", session_id):
@@ -35,12 +52,14 @@ def transcript_for(session_id: str, root: Optional[Path] = None) -> Optional[Pat
         return None
     matches = sorted(base.glob("*/{}.jsonl".format(session_id)))
     if root:
-        # Prefer the directory whose mangled name mentions this repo, so two
-        # sessions with the same id in different projects cannot be confused.
-        stem = str(root).strip("/").replace("/", "-")
-        preferred = [m for m in matches if stem in m.parent.name]
-        if preferred:
-            return preferred[0]
+        # Prefer the directory that *is* this repo's, so two sessions with the
+        # same id in different projects cannot be confused.
+        name = project_dir_name(root)
+        exact = [m for m in matches if m.parent.name == name]
+        if exact:
+            return exact[0]
+    # A session id is a UUID, so a file carrying it is this session's wherever
+    # the harness filed it; the directory match above only breaks a tie.
     return matches[0] if matches else None
 
 
@@ -121,8 +140,11 @@ def latest_session(root: Path, sift_dir: Optional[Path] = None) -> Optional[str]
     base = TRANSCRIPTS
     if not base.is_dir():
         return None
-    stem = str(root).strip("/").replace("/", "-")
-    candidates = [p for p in base.glob("*/*.jsonl") if stem in p.parent.name]
+    name = project_dir_name(root)
+    # Exact name only, no looser fallback: if the harness's mangling moves,
+    # the answer is "not verifiable", which `doctor` says. A substring match
+    # would instead verify a prefix sibling's session and call it ours.
+    candidates = [p for p in base.glob("*/*.jsonl") if p.parent.name == name]
     if not candidates:
         return None
     recorded = _last_recorded_session(sift_dir)

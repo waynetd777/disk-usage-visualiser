@@ -62,7 +62,9 @@
     "post_bash": true,
     "pre_compact": true,
     "session_end": true,
-    "duplicate_read_mode": "warn"
+    "duplicate_read_mode": "warn",
+    "big_read_mode": "off",
+    "big_read_tokens": 2000
   },
   "openwolf": {
     "reviewed": []

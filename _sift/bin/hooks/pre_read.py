@@ -38,6 +38,14 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
         # thing worth saying about a file in here.
         return _oversized_sift_file(h, rel, raw_path, tool_input)
 
+    # `ctx.contains`, not `startswith("..")`: `rel()` hands back the absolute
+    # path for a file outside the root, so without this a Read of
+    # `/tmp/scratch.md` was filed in `files_read` under its machine path and
+    # logged an `index_miss` about a file this repo has never had. `post_read`
+    # was fixed for exactly this in 0.4.0; this hook was missed.
+    if not h.ctx.contains(rel):
+        return None
+
     # A ranged read is already the behaviour we are trying to encourage.
     # `post_read` records it, not this hook: the saving is the whole file
     # minus what the range actually returned, and only one of those two
@@ -66,7 +74,18 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     if syms and rec.get("blob"):
         bits.append("Symbols: {} — prefer offset/limit.".format(sym_mod.format_hint(syms)))
 
-    out: Dict[str, Any] = {"deny": False, "text": None, "event": None}
+    # A whole-file read of a big file, refused once and handed its ranges.
+    # This is where the tokens went on the first real sessions: the Read tool
+    # flooded five times as often as Bash, after this hook had offered the
+    # ranges and been ignored. The refusal is honest where a rewrite would not
+    # be -- the model knows it did not get the file -- and the second attempt
+    # goes through, so a file that is genuinely needed whole costs one turn.
+    big_mode = str(h.cfg.get("hooks", "big_read_mode", default="off"))
+    big_threshold = int(h.cfg.get("hooks", "big_read_tokens", default=2000) or 2000)
+    size_tokens = tokens or _size_tokens(h, raw_path, rel)
+    big = (big_mode == "deny" and not h.subagent and size_tokens >= big_threshold)
+
+    out: Dict[str, Any] = {"deny": False, "text": None, "event": None, "big": False}
 
     # One locked read-modify-write for everything that touches the session.
     # `load` then `save` was a lost update: Claude Code batches tool calls, so
@@ -76,11 +95,15 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     # what `mutate` is for (OpenWolf #83).
     def change(state: Dict[str, Any]) -> None:
         seen = (state.get("files_read") or {}).get(rel)
+        # A compacted entry is not a duplicate in either direction: the content
+        # was evicted, so "already read and has not changed" is false and the
+        # warning used to say it anyway -- only the deny branch checked. The
+        # read below clears the flag, so the one after it is caught again.
         duplicate = (bool(seen) and not seen.get("ranged", True)
+                     and not seen.get("compacted")
                      and seen.get("blob") == rec.get("blob") and rec.get("blob"))
         if duplicate and not h.subagent and mode != "off":
-            if (mode == "deny" and tokens > 0 and not seen.get("denied_once")
-                    and not seen.get("compacted")):
+            if mode == "deny" and tokens > 0 and not seen.get("denied_once"):
                 seen["denied_once"] = True
                 state["files_read"][rel] = seen
                 out["deny"] = True
@@ -92,6 +115,16 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
                 "{} was already read in this session and has not changed "
                 "(~{} tok).".format(rel, tokens)))
             return
+        # Kept apart from `files_read`: a refusal is not a read, and a
+        # placeholder entry there would be counted as one by session_end and
+        # compared as one by both duplicate checks.
+        refused = state.setdefault("big_read_refused", {})
+        if big and not refused.get(rel):
+            refused[rel] = True
+            out["deny"] = True
+            out["big"] = True
+            out["event"] = "big_read_denied"
+            return
         _record_read(state, rel, rec, tokens)
         if not desc and not syms:
             return
@@ -100,7 +133,18 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     session_mod.mutate(h.ctx, h.session_id, change)
 
     if out["event"]:
-        ledger.record(h.ctx, h.session_id, out["event"], tokens)
+        ledger.record(h.ctx, h.session_id, out["event"],
+                      size_tokens if out["big"] else tokens)
+    if out["big"]:
+        if syms:
+            how = "Symbols: {}. Read the part you need with offset/limit".format(
+                sym_mod.format_hint(syms, 8))
+        else:
+            how = "Read it with offset/limit in windows of about 200 lines"
+        return _common.deny(EVENT, _common.PREFIX + (
+            "{} is ~{} tok and this would read all of it into the conversation "
+            "for the rest of the session. {}; if you need all of it, take it in "
+            "a few windows.".format(rel, size_tokens, how)))
     if out["deny"]:
         return _common.deny(EVENT, _common.PREFIX + (
             "{} is already in this conversation, unchanged (~{} tok). Scroll back rather "
@@ -109,6 +153,19 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     if out["text"]:
         return _common.additional_context(EVENT, out["text"])
     return None
+
+
+def _size_tokens(h: "_common.HookCtx", raw_path: str, rel: str) -> int:
+    """A size for a file the scan has not measured: untracked, or not yet
+    scanned. From the bytes on disk, with the scan's own per-extension divisor,
+    so a big file is caught whether or not `sift scan` has run."""
+    from siftlib import util
+    path = raw_path if os.path.isabs(raw_path) else str(h.ctx.root / rel)
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return 0
+    return util.estimate_tokens_for_chars(size, os.path.splitext(rel)[1])
 
 
 def _oversized_sift_file(h: "_common.HookCtx", rel: str, raw_path: str,
@@ -144,6 +201,10 @@ def _record_read(state: Dict[str, Any], rel: str, rec: Dict[str, Any], tokens: i
     entry["tokens"] = tokens or entry.get("tokens", 0)
     entry["blob"] = rec.get("blob", entry.get("blob", ""))
     entry["ranged"] = False
+    # The file is in the conversation again, so the compaction that evicted it
+    # no longer excuses the next read. Nothing used to clear this, which
+    # disarmed `deny` for that file for the rest of the session.
+    entry["compacted"] = False
     state["files_read"][rel] = entry
 
 

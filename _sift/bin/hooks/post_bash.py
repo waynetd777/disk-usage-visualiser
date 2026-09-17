@@ -36,8 +36,12 @@ import _common
 def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     command = str(h.tool_input().get("command") or "")
     note = _track_read(h, command)
-    governed, flood_note = _govern(h, command)
-    note = "\n".join(n for n in (note, flood_note) if n) or None
+    governed, flood = _govern(h, command)
+    # The flood note is two strings, not one: the model is asked to raise the
+    # setting, and the person is told in a line of their own. Everything else
+    # this hook says is for the model alone.
+    flood_text, flood_user = flood if flood else (None, "")
+    note = "\n".join(n for n in (note, flood_text) if n) or None
     if governed:
         if note:
             hook_out = governed.get("hookSpecificOutput")
@@ -50,9 +54,13 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
                 # went missing whenever governance also fired.
                 governed["stopReason"] = "\n\n".join(
                     p for p in (str(governed.get("stopReason") or ""), note) if p)
+        if flood_user:
+            # Top level, beside the rewrite rather than inside it: the person's
+            # line is not part of what the model is handed back.
+            governed["systemMessage"] = flood_user
         return governed
     if note:
-        return _common.additional_context("PostToolUse", note)
+        return _common.additional_context("PostToolUse", note, flood_user)
     return None
 
 
@@ -106,6 +114,9 @@ def _track_read(h: "_common.HookCtx", command: str) -> Optional[str]:
         if read.full:
             entry["tokens"] = tokens
             entry["ranged"] = False
+            # Printed in full again, so the compaction that evicted it is spent
+            # and the next `cat` of it is a real duplicate once more.
+            entry["compacted"] = False
         else:
             entry.setdefault("tokens", 0)
             # A window after a full read must not downgrade the entry: doing so
@@ -116,8 +127,12 @@ def _track_read(h: "_common.HookCtx", command: str) -> Optional[str]:
 
     session_mod.mutate(h.ctx, h.session_id, change)
 
+    # `compacted`: compaction evicted the output, so "already printed in full"
+    # is a false statement about the conversation. This channel ignored the
+    # flag entirely and made that claim after every compaction.
     unchanged = bool(seen) and seen.get("blob") == blob and blob
     if (read.full and unchanged and not seen.get("ranged", True)
+            and not seen.get("compacted")
             and int(seen.get("tokens", 0) or 0) > 0):
         return (_common.PREFIX + "{} was already printed in full this session "
                 "(~{} tok) and has not changed since.".format(
@@ -149,7 +164,8 @@ def _stdout(response: Any) -> Optional[str]:
 
 
 def _govern(h: "_common.HookCtx", command: str):
-    """Returns `(rewrite, note)`, either of which may be None.
+    """Returns `(rewrite, note)`, either of which may be None. The note is the
+    `(model text, person line)` pair `_flood_note` builds.
 
     The note exists because a default-off feature nobody is told about is a
     deleted feature that still costs maintenance. When `advise` is on and
@@ -214,8 +230,15 @@ def _govern(h: "_common.HookCtx", command: str):
         # a completed tool result with hook feedback is continue:false plus
         # stopReason; the model then continues from the condensed text.
         return ({"continue": False, "stopReason": result.text}, note)
-    updated = dict(response)
-    updated["stdout"] = result.text
+    # Claude Code's `tool_response` is sometimes the output string itself, not
+    # an object with a `stdout` key. `dict(response)` raised TypeError on that
+    # shape, the fail-open wrapper swallowed it, and the ledger recorded a
+    # `governed` saving the model never got: it saw the full output.
+    if isinstance(response, str):
+        updated: Any = result.text
+    else:
+        updated = dict(response)
+        updated["stdout"] = result.text
     return ({"hookSpecificOutput": {"hookEventName": "PostToolUse",
                                     "updatedToolOutput": updated}}, note)
 
@@ -236,8 +259,15 @@ def _is_codex(h: "_common.HookCtx") -> bool:
     return bool(h.payload.get("turn_id") or h.payload.get("model"))
 
 
-def _flood_note(h: "_common.HookCtx", session_mod, tokens: int) -> Optional[str]:
-    """Ask the model to put the choice to the person, once per session."""
+def _flood_note(h: "_common.HookCtx", session_mod,
+                tokens: int) -> Optional["tuple[str, str]"]:
+    """Ask the model to put the choice to the person, once per session.
+
+    `(model text, person line)`. The whole mechanism rests on this nudge, and
+    it used to be `additionalContext` only -- a channel the person never sees,
+    put to an agent that waits to be asked. So the person is told too, in one
+    line, through `systemMessage`. `post_read` does the same for `big_read_mode`.
+    """
     seen = {"count": 0, "asked": False}
 
     def change(state: Dict[str, Any]) -> None:
@@ -252,7 +282,7 @@ def _flood_note(h: "_common.HookCtx", session_mod, tokens: int) -> Optional[str]
     session_mod.mutate(h.ctx, h.session_id, change)
     if seen["asked"] or seen["count"] < FLOODS_BEFORE_ASKING:
         return None
-    return (_common.PREFIX + "{} commands this session have returned more than "
+    text = (_common.PREFIX + "{} commands this session have returned more than "
             "the condensation threshold (~{:,} tokens in total), and every line "
             "of that stays in context for the rest of the session. Output "
             "governance would condense these and keep the full text on disk, "
@@ -260,6 +290,11 @@ def _flood_note(h: "_common.HookCtx", session_mod, tokens: int) -> Optional[str]
             "user whether to turn it on -- `governance.enabled: true` in "
             "{}/config.json -- and do not turn it on yourself.".format(
                 seen["count"], seen.get("tokens", 0), h.ctx.dir_name))
+    user = ("sift: {} commands over the threshold this session (~{:,} tokens). "
+            "`governance.enabled: true` in {}/config.json would condense them; "
+            "say so if you want it on.".format(
+                seen["count"], seen.get("tokens", 0), h.ctx.dir_name))
+    return (text, user)
 
 
 if __name__ == "__main__":
