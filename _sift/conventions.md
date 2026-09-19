@@ -12,7 +12,7 @@ This folder holds what cannot be re-derived from the code about `disk-usage-visu
 ## After you change code
 
 - Fixed a bug: `sift bug add --error … --root-cause … --fix … --files …`.
-- Made a decision worth remembering: `sift decide "<title>"`, then fill in the block it appends.
+- Made a decision worth remembering: `sift decide "<title>" --context … --decision … --consequences …` — one complete command, like `bug add`, not a stub to fill in afterwards.
 - A file's one-line description is now wrong: `sift describe set <path> "…"`.
 - Stage `_sift/` in the same commit as the code. There is nothing else to maintain.
 
