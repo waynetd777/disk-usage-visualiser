@@ -52,7 +52,7 @@ def pending(ctx: Ctx, cfg: Config) -> List[Dict[str, Any]]:
             "id": "describe",
             "what": "{} of the {} busiest files have no description".format(
                 len(undescribed_hot), hot_total),
-            "how": "`sift describe --set <path> \"…\"` - the busiest files first; "
+            "how": "`sift describe set <path> \"…\"` - the busiest files first; "
                    "the rest accrue as you work",
             "agent": "The pre-read hook has nothing to offer for the files this "
                      "repo changes most. Describe these, reading each one first "

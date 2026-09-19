@@ -13,7 +13,7 @@ This folder holds what cannot be re-derived from the code about `{{repo}}`, and 
 
 - Fixed a bug: `sift bug add --error … --root-cause … --fix … --files …`.
 - Made a decision worth remembering: `sift decide "<title>"`, then fill in the block it appends.
-- A file's one-line description is now wrong: `sift describe --set <path> "…"`.
+- A file's one-line description is now wrong: `sift describe set <path> "…"`.
 - Stage `{{dir}}/` in the same commit as the code. There is nothing else to maintain.
 
 ## What never goes in

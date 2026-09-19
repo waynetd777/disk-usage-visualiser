@@ -36,6 +36,11 @@ from siftlib import (  # noqa: E402
 
 VERSION = (HERE / "VERSION").read_text(encoding="utf-8").strip() if (HERE / "VERSION").exists() else "0.0.0"
 DEFAULT_LINES = 40
+# How many rows a browse-style listing shows before it caps and says "use
+# --top". One value so `describe pending` and `search` do not each pick their
+# own; `bug find` overrides it deliberately (a lookup wants the best few, not a
+# page).
+DEFAULT_TOP = 20
 
 EXIT_OK, EXIT_FINDINGS, EXIT_USAGE, EXIT_ENV, EXIT_BLOCKED = 0, 1, 2, 3, 4
 
@@ -72,35 +77,68 @@ def build_parser() -> argparse.ArgumentParser:
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="example:\n" + "\n".join("  " + e for e in examples))
 
+    def fleet(parser: argparse.ArgumentParser, what: str) -> None:
+        """The `--all`/`--root` pair every fleet command shares: act across
+        every sift repo found under a root (default: home), not just this one.
+        One walk (`upgrade.discover`) backs them all, so the flags stay
+        identical in meaning wherever they appear."""
+        parser.add_argument("--all", action="store_true",
+                            help="{} across every sift repo found under --root".format(what))
+        parser.add_argument("--root", default=None,
+                            help="where --all searches (default: your home directory)")
+
+    def confirmable(parser: argparse.ArgumentParser, help_text: str) -> None:
+        """`--yes`: the same "do not stop to ask me" flag on every command that
+        pauses for confirmation, declared in one place so it means one thing."""
+        parser.add_argument("--yes", action="store_true", help=help_text)
+
     s = cmd("init", "scaffold sift's tracked files into this repo",
             "sift init", "sift init --dry-run")
     s.add_argument("--migrate-openwolf", action="store_true")
     s.add_argument("--no-githooks", action="store_true")
     s.add_argument("--no-skills", action="store_true")
     s.add_argument("--dir", default=None)
-    s.add_argument("--yes", action="store_true")
+    confirmable(s, "scaffold without the interactive prompts")
     s.add_argument("--dry-run", action="store_true")
 
     s = cmd("doctor", "check the installation, and optionally repair it",
-            "sift doctor", "sift doctor --fix")
+            "sift doctor", "sift doctor --fix", "sift doctor --all")
     s.add_argument("--fix", action="store_true")
     s.add_argument("--check-upstream", action="store_true")
+    confirmable(s, "skip the confirmation before --all --fix writes to every repo")
+    fleet(s, "check every repo")
 
     cmd("version", "show the installed runtime and whether the clone would change it",
         "sift version")
+
+    s = cmd("repos", "list every repo with sift installed, and its version",
+            "sift repos", "sift repos --root ~/work")
+    s.add_argument("--root", default=None,
+                   help="where to search (default: your home directory)")
 
     s = cmd("scan", "rescan changed files and refresh the index",
             "sift scan", "sift scan --full")
     s.add_argument("--full", action="store_true")
 
     s = cmd("describe", "read or set a file's one-line description",
-            "sift describe --pending",
-            'sift describe --set src/app.ts "HTTP entrypoint"',
-            "sift describe --get src/app.ts")
-    s.add_argument("--pending", action="store_true")
-    s.add_argument("--top", type=int, default=20)
-    s.add_argument("--set", dest="set_", nargs=2, metavar=("PATH", "DESC"))
-    s.add_argument("--get", metavar="PATH")
+            "sift describe pending",
+            'sift describe set src/app.ts "HTTP entrypoint"',
+            "sift describe get src/app.ts")
+    dsub = s.add_subparsers(dest="describe_cmd", metavar="{get,set,pending}")
+    dget = dsub.add_parser("get", help="print one file's description")
+    dget.add_argument("path")
+    dset = dsub.add_parser("set", help="set one file's description")
+    dset.add_argument("path")
+    dset.add_argument("desc")
+    dpend = dsub.add_parser("pending", help="files that still need a description")
+    dpend.add_argument("--top", type=int, default=DEFAULT_TOP)
+    # The pre-0.15 flag forms, kept working but off the help: get/set/pending
+    # match `config get/set` now, and that is the one shape the docs teach.
+    s.add_argument("--pending", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--top", type=int, default=DEFAULT_TOP, help=argparse.SUPPRESS)
+    s.add_argument("--set", dest="set_", nargs=2, metavar=("PATH", "DESC"),
+                   help=argparse.SUPPRESS)
+    s.add_argument("--get", metavar="PATH", help=argparse.SUPPRESS)
 
     s = cmd("map", "sizes and symbol ranges to read instead of a whole file",
             "sift map src/siftlib", "sift map src/sift.py")
@@ -110,15 +148,16 @@ def build_parser() -> argparse.ArgumentParser:
     s = cmd("search", "search the sift docs and file descriptions",
             'sift search "token budget"', 'sift search "ledger" --layer docs')
     s.add_argument("query")
-    s.add_argument("--top", type=int, default=10)
+    s.add_argument("--top", type=int, default=DEFAULT_TOP)
     s.add_argument("--layer", choices=["docs", "files", "all"], default="all")
 
     s = cmd("lint", "check the sift directory for secrets, stray paths and broken links",
-            "sift lint", "sift lint --staged")
+            "sift lint", "sift lint --staged", "sift lint --all")
     s.add_argument("--staged", action="store_true")
     s.add_argument("--ci", action="store_true")
     s.add_argument("--fast", action="store_true")
     s.add_argument("--only", default=None)
+    fleet(s, "lint every repo")
 
     s = cmd("log", "append a note to the journal",
             'sift log --kind session --detail "shipped ledger --all"')
@@ -146,6 +185,8 @@ def build_parser() -> argparse.ArgumentParser:
                         formatter_class=argparse.RawDescriptionHelpFormatter,
                         epilog='example:\n  sift bug find "timeout"')
     b.add_argument("query")
+    # A lookup wants the best few matches, not a page of them, so this keeps its
+    # own small default rather than DEFAULT_TOP.
     b.add_argument("--top", type=int, default=5)
 
     s = cmd("decide", "record a decision worth remembering",
@@ -166,17 +207,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = cmd("ledger", "what the index and governor saved this period",
             "sift ledger", "sift ledger --all", "sift ledger --since 30.days")
     s.add_argument("--since", default="7.days")
-    s.add_argument("--all", action="store_true",
-                   help="totals across every sift repo found under --root")
-    s.add_argument("--root", default=None,
-                   help="where --all searches (default: your home directory)")
+    fleet(s, "total the ledger")
 
     s = cmd("import", "import content from another tool into sift",
-            "sift import --from-openwolf --dry-run",
-            "sift import --from-openwolf")
-    s.add_argument("--from-openwolf", dest="from_openwolf", action="store_true")
+            "sift import", "sift import --dry-run")
+    s.add_argument("--from-openwolf", dest="from_openwolf", action="store_true",
+                   help=argparse.SUPPRESS)
     s.add_argument("--dry-run", action="store_true")
-    s.add_argument("--yes", action="store_true")
+    confirmable(s, "import without the interactive prompts")
 
     s = cmd("config", "read or set a validated config value",
             "sift config get hooks.big_read_mode",
@@ -186,8 +224,10 @@ def build_parser() -> argparse.ArgumentParser:
     cg = csub.add_parser("get", help="print the effective value of a config key",
                          description="print the effective value of a config key",
                          formatter_class=argparse.RawDescriptionHelpFormatter,
-                         epilog="example:\n  sift config get governance.enabled")
+                         epilog="example:\n  sift config get governance.enabled\n"
+                                "  sift config get governance.enabled --all")
     cg.add_argument("key")
+    fleet(cg, "read the value")
     cs = csub.add_parser("set", help="set one config key (validated)",
                          description="set one config key, validated against the schema",
                          formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -195,10 +235,8 @@ def build_parser() -> argparse.ArgumentParser:
                                 "  sift config set governance.enabled true --all")
     cs.add_argument("key")
     cs.add_argument("value")
-    cs.add_argument("--all", action="store_true",
-                    help="set it in every installed repo found under --root")
-    cs.add_argument("--root", default=None,
-                    help="where --all searches (default: your home directory)")
+    confirmable(cs, "skip the confirmation before --all writes to every repo")
+    fleet(cs, "set it")
 
     return p
 
@@ -468,6 +506,11 @@ class App:
         return answer == "y"
 
     def cmd_doctor(self) -> int:
+        if self.args.all:
+            return self._doctor_all()
+        if self._no_root_without_all():
+            self.out.fail("USAGE", "--root only means something with --all")
+            return EXIT_USAGE
         data = doctor_mod.run(self.ctx, self.cfg, fix=self.args.fix,
                               check_upstream=self.args.check_upstream)
         if not self.out.json_mode:
@@ -484,6 +527,52 @@ class App:
                 self.out.line("fixed: " + ", ".join(data["fixed"]))
         self.out.emit(data)
         return EXIT_FINDINGS if data["failed"] else EXIT_OK
+
+    def _doctor_all(self) -> int:
+        root = self._fleet_root()
+        if root is None:
+            return EXIT_ENV
+        targets = list(self._fleet_repos(root))
+        if self.args.fix:
+            # Reporting across the fleet is read-only, but --fix writes to every
+            # repo, so it is the branch that has to ask first.
+            ok = self._confirm_fleet("fix {} under {}?".format(
+                util.count(len(targets), "repo"), root))
+            if ok is None:
+                self.out.fail("USAGE", "fixing across repos needs --yes when not interactive")
+                return EXIT_USAGE
+            if not ok:
+                if not self.out.json_mode:
+                    self.out.line("nothing fixed")
+                self.out.emit({"root": str(root), "repos": []})
+                return EXIT_OK
+        repos: List[Dict[str, Any]] = []
+        for rel, ctx in targets:
+            cfg = config_mod.load(ctx.config_path)
+            data = doctor_mod.run(ctx, cfg, fix=self.args.fix,
+                                  check_upstream=self.args.check_upstream)
+            repos.append({
+                "repo": rel, "checks": len(data["checks"]),
+                "failed": [c["id"] for c in data["checks"] if not c["ok"]],
+                "fixed": data["fixed"]})
+        bad = [r for r in repos if r["failed"]]
+        if not self.out.json_mode:
+            self.out.line("doctor across {} under {}".format(
+                util.count(len(repos), "repo"), root))
+            if repos:
+                self.out.line("")
+                self.out.table(
+                    [[r["repo"], util.num(r["checks"]),
+                      "ok" if not r["failed"] else "FAIL: " + ", ".join(r["failed"])]
+                     for r in repos],
+                    ["repo", "checks", "result"])
+            if self.args.fix:
+                for r in repos:
+                    if r["fixed"]:
+                        self.out.line("fixed in {}: {}".format(
+                            r["repo"], ", ".join(r["fixed"])))
+        self.out.emit({"root": str(root), "repos": repos})
+        return EXIT_FINDINGS if bad else EXIT_OK
 
     def cmd_version(self) -> int:
         """What is installed here, what the clone would install, and whether
@@ -524,9 +613,13 @@ class App:
         return EXIT_OK
 
     def cmd_describe(self) -> int:
-        args = self.args
-        if args.set_:
-            path, desc = args.set_
+        # get/set/pending are subcommands now (matching `config get/set`); the
+        # --get/--set/--pending flags are kept as hidden aliases, so both spell
+        # the same three operations and this reads either.
+        a = self.args
+        sub = getattr(a, "describe_cmd", None)
+        if sub == "set" or a.set_:
+            path, desc = (a.path, a.desc) if sub == "set" else a.set_
             rec, err = scan_mod.set_description(self.ctx, self.cfg, path, desc)
             if err:
                 self.out.fail("BAD_PATH", err)
@@ -535,23 +628,25 @@ class App:
                 self.out.line("set: {} - {}".format(rec["path"], rec["desc"]))
             self.out.emit({"path": rec["path"], "hash": rec["hash"]})
             return EXIT_OK
-        if args.get:
-            rec = scan_mod.load_descriptions(self.ctx).get(args.get.replace("\\", "/"))
+        if sub == "get" or a.get:
+            target = a.path if sub == "get" else a.get
+            rec = scan_mod.load_descriptions(self.ctx).get(target.replace("\\", "/"))
             if not self.out.json_mode:
                 self.out.line(rec["desc"] if rec else "(no description)")
             self.out.emit(rec)
             return EXIT_OK
-        if args.pending:
+        if sub == "pending" or a.pending:
+            top = a.top
             rows = scan_mod.pending_descriptions(self.ctx, self.cfg)
-            shown = self.truncated(rows, args.top)
+            shown = self.truncated(rows, top)
             if not self.out.json_mode:
                 self.out.line("add one line saying what each file is for:")
                 self.out.table([[r["reason"], str(r["churn"]), str(r["tokens"]), r["path"]]
                                 for r in shown], ["why", "churn", "tok", "path"])
-                self.more_note(len(rows), args.top)
+                self.more_note(len(rows), top)
             self.out.emit(shown)
             return EXIT_FINDINGS if rows else EXIT_OK
-        self.out.fail("USAGE", "describe needs --pending, --set or --get")
+        self.out.fail("USAGE", "describe needs get, set or pending")
         return EXIT_USAGE
 
     def cmd_map(self) -> int:
@@ -605,6 +700,11 @@ class App:
         return EXIT_OK
 
     def cmd_lint(self) -> int:
+        if self.args.all:
+            return self._lint_all()
+        if self._no_root_without_all():
+            self.out.fail("USAGE", "--root only means something with --all")
+            return EXIT_USAGE
         only = set(c.strip().upper() for c in self.args.only.split(",")) if self.args.only else None
         issues = lint_mod.run(self.ctx, self.cfg, fast=self.args.fast, only=only,
                               staged=self.args.staged)
@@ -630,6 +730,43 @@ class App:
         if self.args.ci and summary["warnings"] and not advisory:
             return EXIT_FINDINGS
         return EXIT_OK
+
+    def _lint_all(self) -> int:
+        """A fleet hygiene sweep: run lint in every repo and report which ones
+        are not clean, with the offending lines for the errors -- that is the
+        secret sweep the privacy rule wants across a machine, not just here."""
+        root = self._fleet_root()
+        if root is None:
+            return EXIT_ENV
+        only = set(c.strip().upper() for c in self.args.only.split(",")) if self.args.only else None
+        repos: List[Dict[str, Any]] = []
+        for rel, ctx in self._fleet_repos(root):
+            cfg = config_mod.load(ctx.config_path)
+            issues = lint_mod.run(ctx, cfg, fast=self.args.fast, only=only,
+                                  staged=self.args.staged)
+            summary = lint_mod.summarise(issues)
+            repos.append({"repo": rel, "errors": summary["errors"],
+                          "warnings": summary["warnings"], "issues": issues})
+        dirty = [r for r in repos if r["errors"] or r["warnings"]]
+        any_errors = any(r["errors"] for r in repos)
+        if not self.out.json_mode:
+            self.out.line("lint across {} under {}".format(
+                util.count(len(repos), "repo"), root))
+            if dirty:
+                self.out.line("")
+                self.out.table(
+                    [[r["repo"], util.num(r["errors"]), util.num(r["warnings"])]
+                     for r in dirty], ["repo", "errors", "warnings"])
+                for r in dirty:
+                    errs = [i for i in r["issues"] if i["severity"] == lint_mod.SEV_ERROR]
+                    for issue in errs[:DEFAULT_LINES]:
+                        self.out.line("  {} {}/{}:{} {}".format(
+                            issue["code"], r["repo"], issue["path"],
+                            issue["line"], issue["message"]))
+            self.out.line("")
+            self.out.line("{} clean".format(util.count(len(repos) - len(dirty), "repo")))
+        self.out.emit({"root": str(root), "repos": repos})
+        return EXIT_FINDINGS if any_errors else EXIT_OK
 
     def cmd_log(self) -> int:
         entry = journal_mod.append(self.ctx, self.args.kind, self.args.detail,
@@ -705,6 +842,80 @@ class App:
         self.out.emit(rows[0] if self.args.id else rows)
         return EXIT_OK
 
+    # -- fleet helpers ------------------------------------------------------
+    def _fleet_root(self) -> Optional[Path]:
+        """The directory a `--all` walks from: `--root` if given, else home.
+        Fails with ENV and returns None if it is not a directory, so every
+        fleet command reports a bad root the same way."""
+        root = (Path(self.args.root).expanduser() if self.args.root
+                else Path.home()).resolve()
+        if not root.is_dir():
+            self.out.fail("ENV", "{} is not a directory".format(root))
+            return None
+        return root
+
+    def _fleet_repos(self, root: Path):
+        """(repo-relative name, Ctx) for every sift repo under `root`, in the
+        one order `upgrade.discover` returns. The shared walk behind every
+        `--all`, so all of them see the same repos in the same order."""
+        from siftlib import upgrade as upgrade_mod
+        for repo in upgrade_mod.discover(root):
+            ctx = paths.Ctx(repo, paths.resolve_dir_name(repo))
+            try:
+                rel = repo.relative_to(root).as_posix()
+            except ValueError:
+                rel = str(repo)
+            yield rel, ctx
+
+    def _no_root_without_all(self) -> bool:
+        """--root only means something with --all; used by the single-repo
+        branch of every fleet command to reject a stray --root."""
+        return bool(getattr(self.args, "root", None))
+
+    def _confirm_fleet(self, prompt: str) -> Optional[bool]:
+        """Confirm a write that will touch every repo under a root before it
+        happens -- the guard clig.dev wants on a wide, hard-to-undo action, and
+        the same stance `sift update --all` takes. `--yes` short-circuits to
+        yes; a non-interactive run (piped, or under --json) has no one to ask,
+        so it returns None and the caller refuses rather than guess. Otherwise
+        the person answers."""
+        if getattr(self.args, "yes", False):
+            return True
+        if self.out.json_mode or not sys.stdin.isatty():
+            return None
+        return self._ask(prompt)
+
+    def cmd_repos(self) -> int:
+        """List every repo with sift installed and the version each carries --
+        the discoverable name for the fleet listing under all the `--all`
+        walks. Read-only: it never says a repo is out of date it cannot see a
+        clone for (state `unknown`), it just lists what is on disk."""
+        from siftlib import upgrade as upgrade_mod
+        root = self._fleet_root()
+        if root is None:
+            return EXIT_ENV
+        clone = upgrade_mod.find_clone()
+        clone_version = ""
+        if clone is not None:
+            clone_version = util.read_text(clone / "src" / "VERSION").strip()
+        repos: List[Dict[str, Any]] = []
+        for rel, ctx in self._fleet_repos(root):
+            data = upgrade_mod.status(ctx, clone=clone)
+            repos.append({"repo": rel, "version": data["installed"],
+                          "state": data["state"]})
+        if not self.out.json_mode:
+            head = "{} with sift under {}".format(
+                util.count(len(repos), "repo"), root)
+            if clone_version:
+                head += " (clone {})".format(clone_version)
+            self.out.line(head)
+            if repos:
+                self.out.line("")
+                self.out.table([[r["repo"], r["version"], r["state"]] for r in repos],
+                               ["repo", "version", "state"])
+        self.out.emit({"root": str(root), "clone_version": clone_version, "repos": repos})
+        return EXIT_OK
+
     def cmd_ledger(self) -> int:
         if self.args.all:
             return self._ledger_all()
@@ -718,11 +929,8 @@ class App:
         return EXIT_OK
 
     def _ledger_all(self) -> int:
-        from pathlib import Path
-        root = (Path(self.args.root).expanduser() if self.args.root
-                else Path.home()).resolve()
-        if not root.is_dir():
-            self.out.fail("ENV", "{} is not a directory".format(root))
+        root = self._fleet_root()
+        if root is None:
             return EXIT_ENV
         summary = ledger_mod.summarise_all(root, self.args.since)
         if not self.out.json_mode:
@@ -831,9 +1039,8 @@ class App:
                 "as fresh)".format(cost, saved, data["carry_basis"]))
 
     def cmd_import(self) -> int:
-        if not self.args.from_openwolf:
-            self.out.fail("USAGE", "import needs --from-openwolf")
-            return EXIT_USAGE
+        # OpenWolf is the only source there is, so `sift import` means it; the
+        # old --from-openwolf still works (hidden) for anyone who typed it.
         from siftlib import migrate_openwolf as mig_mod
         from siftlib.migrate_openwolf import Migration
         quiet = self.out.json_mode
@@ -882,10 +1089,37 @@ class App:
         if path is None:
             self.out.fail("USAGE", "unknown config key: " + key)
             return EXIT_USAGE
+        if getattr(self.args, "all", False):
+            return self._config_get_all(key, path, default)
+        if self._no_root_without_all():
+            self.out.fail("USAGE", "--root only means something with --all")
+            return EXIT_USAGE
         value = self.cfg.get(*path, default=default)
         if not self.out.json_mode:
             self.out.line("{} = {}".format(key, self._fmt_config(value)))
         self.out.emit({"key": key, "value": value})
+        return EXIT_OK
+
+    def _config_get_all(self, key: str, path, default: Any) -> int:
+        """Read one key across the fleet -- the read that pairs with
+        `config set --all`: after setting governance on everywhere, this is how
+        you confirm it took, or audit which repos have it on."""
+        root = self._fleet_root()
+        if root is None:
+            return EXIT_ENV
+        repos: List[Dict[str, Any]] = []
+        for rel, ctx in self._fleet_repos(root):
+            cfg = config_mod.load(ctx.config_path)
+            repos.append({"repo": rel, "value": cfg.get(*path, default=default)})
+        if not self.out.json_mode:
+            self.out.line("{} across {} under {}".format(
+                key, util.count(len(repos), "repo"), root))
+            if repos:
+                self.out.line("")
+                self.out.table(
+                    [[r["repo"], self._fmt_config(r["value"])] for r in repos],
+                    ["repo", "value"])
+        self.out.emit({"key": key, "root": str(root), "repos": repos})
         return EXIT_OK
 
     def _config_set(self) -> int:
@@ -915,22 +1149,23 @@ class App:
         return EXIT_OK
 
     def _config_set_all(self, key: str, value: Any) -> int:
-        from pathlib import Path
-        from siftlib import upgrade as upgrade_mod
-        root = (Path(self.args.root).expanduser() if self.args.root
-                else Path.home()).resolve()
-        if not root.is_dir():
-            self.out.fail("ENV", "{} is not a directory".format(root))
+        root = self._fleet_root()
+        if root is None:
             return EXIT_ENV
-        repos = upgrade_mod.discover(root)
+        targets = list(self._fleet_repos(root))
+        ok = self._confirm_fleet("set {} = {} in {} under {}?".format(
+            key, self._fmt_config(value), util.count(len(targets), "repo"), root))
+        if ok is None:
+            self.out.fail("USAGE", "writing across repos needs --yes when not interactive")
+            return EXIT_USAGE
+        if not ok:
+            if not self.out.json_mode:
+                self.out.line("nothing written")
+            self.out.emit({"key": key, "value": value, "set": [], "failed": []})
+            return EXIT_OK
         done: List[str] = []
         failed: List[Dict[str, str]] = []
-        for repo in repos:
-            ctx = paths.Ctx(repo, paths.resolve_dir_name(repo))
-            try:
-                rel = str(repo.relative_to(root))
-            except ValueError:
-                rel = str(repo)
+        for rel, ctx in targets:
             err = config_mod.set_value(ctx.config_path, key, value)
             if err:
                 failed.append({"repo": rel, "error": err})
@@ -951,8 +1186,12 @@ class App:
         if handler is None:
             self.out.fail("USAGE", "unknown command: " + str(self.cmd))
             return EXIT_USAGE
-        if (self.ctx is not None and self.cmd not in ("init", "doctor", "version")
+        if (self.ctx is not None and _needs_repo(self.args)
+                and self.cmd not in ("init", "doctor", "version")
                 and not self.ctx.exists):
+            # A fleet `--all` acts on repos found under a root, not the one you
+            # stand in, so it must not be blocked for standing in a non-sift
+            # repo (or none) -- `_needs_repo` is the same test that let it here.
             self.out.fail("NO_SIFT", "no sift directory at {}, run: {}".format(
                 self.ctx.rel(self.ctx.dir), self.out.action("sift init", err=True)))
             return EXIT_ENV
@@ -974,12 +1213,15 @@ def _bump_note(bump: Dict[str, Any]) -> str:
 def _needs_repo(args: argparse.Namespace) -> bool:
     """Most commands act on the repo you are standing in and cannot run without
     one. The fleet commands are the exception: they walk from your home
-    directory (`--root` to change it) and add up or write across every installed
-    repo, so they need no repo of their own and run from anywhere."""
-    if args.cmd == "ledger" and getattr(args, "all", False):
+    directory (`--root` to change it) and add up, read or write across every
+    installed repo, so they need no repo of their own and run from anywhere.
+
+    `repos` is always a fleet listing; the rest are fleet only with `--all`
+    (on either `config` subcommand)."""
+    if args.cmd == "repos":
         return False
-    if (args.cmd == "config" and getattr(args, "config_cmd", None) == "set"
-            and getattr(args, "all", False)):
+    if getattr(args, "all", False) and args.cmd in (
+            "ledger", "doctor", "lint", "config"):
         return False
     return True
 
