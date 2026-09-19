@@ -285,14 +285,14 @@ def _flood_note(h: "_common.HookCtx", session_mod,
     text = (_common.PREFIX + "{} commands this session have returned more than "
             "the condensation threshold (~{:,} tokens in total), and every line "
             "of that stays in context for the rest of the session. Output "
-            "governance would condense these and keep the full text on disk, "
-            "but it is off by default because it rewrites what you see. Ask the "
-            "user whether to turn it on -- `governance.enabled: true` in "
+            "governance would condense these and keep the full text on disk. It "
+            "is on by default but has been turned off in this repo. Ask the "
+            "user whether to turn it back on -- `governance.enabled: true` in "
             "{}/config.json -- and do not turn it on yourself.".format(
                 seen["count"], seen.get("tokens", 0), h.ctx.dir_name))
     user = ("sift: {} commands over the threshold this session (~{:,} tokens). "
-            "`governance.enabled: true` in {}/config.json would condense them; "
-            "say so if you want it on.".format(
+            "governance is off in this repo; `governance.enabled: true` in "
+            "{}/config.json would condense them. Say so if you want it back on.".format(
                 seen["count"], seen.get("tokens", 0), h.ctx.dir_name))
     return (text, user)
 

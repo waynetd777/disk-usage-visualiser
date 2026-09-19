@@ -84,7 +84,7 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     # A whole-file read over the threshold is a flood by the same definition
     # governance uses for Bash, and it is counted the same way -- measured from
     # what came back, whether or not `big_read_mode` would have refused it.
-    # This is the count that decides whether that mode earns the default.
+    # This is the count that watches whether the default keeps paying off.
     threshold = int(h.cfg.get("hooks", "big_read_tokens", default=2000) or 2000)
     if tokens < threshold:
         return None
@@ -104,10 +104,11 @@ FLOODS_BEFORE_ASKING = 3
 def _flood_note(h: "_common.HookCtx", session_mod, tokens: int) -> Optional[Dict[str, Any]]:
     """Ask the model to put `big_read_mode` to the person, once per session.
 
-    The same shape as the governance note, for the same reason: a default-off
-    setting nobody is told about is a deleted feature. One difference -- the
-    person is told too, in a line, because `additionalContext` never reaches
-    them and an agent waits to be asked.
+    Reached only when the mode has been turned off (it is on by default), and
+    the same shape as the governance note: the floods it would have caught
+    should stay visible so someone can decide to turn it back on. One
+    difference -- the person is told too, in a line, because `additionalContext`
+    never reaches them and an agent waits to be asked.
     """
     seen = {"count": 0, "tokens": 0, "asked": False}
 
@@ -128,14 +129,14 @@ def _flood_note(h: "_common.HookCtx", session_mod, tokens: int) -> Optional[Dict
         "tokens in total), and every line of that stays in context for the rest "
         "of the session. `hooks.big_read_mode: deny` in {}/config.json would "
         "refuse the first whole read of a file that size and hand back its "
-        "symbol ranges instead; the second attempt goes through. It is off by "
-        "default because a refusal costs a round trip. Ask the user whether to "
-        "turn it on, and do not turn it on yourself.".format(
+        "symbol ranges instead; the second attempt goes through. It is on by "
+        "default but has been turned off in this repo. Ask the user whether to "
+        "turn it back on, and do not turn it on yourself.".format(
             seen["count"], int(h.cfg.get("hooks", "big_read_tokens", default=2000) or 2000),
             seen["tokens"], h.ctx.dir_name))
     user = ("sift: {} whole-file reads over the threshold this session (~{:,} tokens). "
-            "`hooks.big_read_mode: deny` in {}/config.json would turn those into "
-            "ranged reads; say so if you want it on.".format(
+            "big-read refusal is off in this repo; `hooks.big_read_mode: deny` in "
+            "{}/config.json would turn those into ranged reads. Say so if you want it back on.".format(
                 seen["count"], seen["tokens"], h.ctx.dir_name))
     return _common.additional_context("PostToolUse", text, user)
 

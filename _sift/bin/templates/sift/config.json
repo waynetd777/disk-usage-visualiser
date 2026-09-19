@@ -3,7 +3,7 @@
   "dir_name": "_sift",
   "governance": {
     "advise": true,
-    "enabled": false,
+    "enabled": true,
     "threshold_tokens": 2000,
     "max_log_bytes": 4194304,
     "cache_budget_bytes": 67108864,
@@ -63,7 +63,7 @@
     "pre_compact": true,
     "session_end": true,
     "duplicate_read_mode": "warn",
-    "big_read_mode": "off",
+    "big_read_mode": "deny",
     "big_read_tokens": 2000
   },
   "openwolf": {

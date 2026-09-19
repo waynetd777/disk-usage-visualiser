@@ -36,7 +36,7 @@ SUGGEST_FAMILIES = ("test", "build", "unknown")
 
 DEFAULTS = {
     "advise": True,
-    "enabled": False,
+    "enabled": True,
     "threshold_tokens": 2000,
     "max_log_bytes": 4 * 1024 * 1024,
     "cache_budget_bytes": 64 * 1024 * 1024,

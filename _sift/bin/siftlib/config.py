@@ -18,17 +18,18 @@ DEFAULTS: Dict[str, Any] = {
     "context": {"reinjection_interval": 25},
     # Bash output governance, split by risk rather than by hook.
     #
-    # `advise` never changes anything: it offers a capped form before a command
-    # that will flood, and counts the floods it sees afterwards. That counting
-    # is the only way anyone finds out whether `enabled` is worth turning on --
-    # with both halves behind one flag, as they once were, a
-    # repo could flood every session and nothing would ever say so.
+    # `advise` offers a capped form before a command whose family must never be
+    # rewritten and counts every flood it sees. `enabled` replaces a flood with
+    # a condensed form plus a pointer to the full text on disk.
     #
-    # `enabled` replaces what the model sees, which is not a thing to switch on
-    # for someone without their say-so.
+    # Both on by default (D-20260919-06). A backtest of 1,600 transcripts found
+    # floods on 4.5% of Bash calls, ~2.5M tokens condensable, dominated by
+    # `cat`/`sed` of a file rather than search. The full text is preserved, so
+    # the cost is a later re-read (~25% of the trackable cases, usually a cheap
+    # ranged one), not lost content.
     "governance": {
         "advise": True,
-        "enabled": False,
+        "enabled": True,
         "threshold_tokens": 2000,
         "max_log_bytes": 4194304,
         "cache_budget_bytes": 67108864,
@@ -68,16 +69,14 @@ DEFAULTS: Dict[str, Any] = {
         "session_end": True,
         "duplicate_read_mode": "warn",
         # A whole-file Read over `big_read_tokens` is where the tokens actually
-        # go: on the first repo governance ran on, Bash flooded three times in
-        # three sessions and the Read tool sixteen to eighteen times, one read
-        # alone near 18,000 tokens, every one of them after `pre_read` had
-        # offered the symbol ranges. `deny` refuses the first whole read of
-        # such a file and hands back the ranges; the second attempt goes
-        # through, so a model that really needs the whole file is delayed one
-        # turn, not blocked. Off by default until it has run on real work --
-        # a refusal costs a round trip, and `read_flood` in the ledger counts
-        # the floods whether or not this is on.
-        "big_read_mode": "off",
+        # go: the backtest behind D-20260919-06 found whole-file reads over the
+        # threshold in 22% of every Read on disk, 10.7M tokens, over four times
+        # the Bash floods. `deny` refuses the first whole read of such a file and
+        # hands back the symbol ranges; the second attempt goes through, so a
+        # model that really needs the whole file is delayed one turn, never
+        # blocked, and nothing is ever dropped. On by default for that reason;
+        # `read_flood` in the ledger counts the floods whichever way it is set.
+        "big_read_mode": "deny",
         "big_read_tokens": 2000,
     },
     # Files that mention OpenWolf for a reason that survives the migration --
@@ -130,7 +129,7 @@ class Config:
 
     @property
     def governance(self) -> Dict[str, Any]:
-        """Bash output governance. Off unless a repo turns it on."""
+        """Bash output governance. On by default (D-20260919-06)."""
         return self.data.get("governance", {})
 
 
