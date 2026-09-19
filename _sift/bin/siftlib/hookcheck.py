@@ -132,7 +132,7 @@ def latest_session(root: Path, sift_dir: Optional[Path] = None) -> Optional[str]
 
     Not simply the newest transcript. A session that starts and is left without
     a message writes no transcript at all, so the newest file on disk can
-    belong to an entirely different session — and reporting "0 invocations in
+    belong to an entirely different session - and reporting "0 invocations in
     the last session" about someone else's session reads as "your hooks did not
     fire" when they did. When the recorded session has no transcript, say so by
     returning nothing rather than verifying the wrong one.
@@ -158,7 +158,7 @@ def latest_session(root: Path, sift_dir: Optional[Path] = None) -> Optional[str]
 
 
 def _last_recorded_session(sift_dir: Optional[Path]) -> str:
-    """The newest session file sift wrote — its own record of being called."""
+    """The newest session file sift wrote - its own record of being called."""
     if sift_dir is None:
         return ""
     sessions = sift_dir / ".cache" / "sessions"

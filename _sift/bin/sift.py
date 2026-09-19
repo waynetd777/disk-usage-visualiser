@@ -49,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="sift", add_help=True,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="sift — context economy for a coding agent",
+        description="sift - context economy for a coding agent",
         epilog="installing and upgrading the tool itself are handled by the\n"
                "`sift` wrapper, not here:\n"
                "  sift install [repo] [flags]\n"
@@ -57,10 +57,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sift-dir", dest="sift_dir", default=None)
     p.add_argument("--json", dest="json_mode", action="store_true")
     p.add_argument("--quiet", action="store_true")
+    p.add_argument("--color", choices=["auto", "always", "never"], default="auto",
+                   help="colour errors and next-step hints (default: auto, "
+                        "only when writing to a terminal; NO_COLOR is honoured)")
     p.add_argument("--version", action="version", version=VERSION)
-    sub = p.add_subparsers(dest="cmd")
+    sub = p.add_subparsers(dest="cmd", metavar="<command>")
 
-    s = sub.add_parser("init")
+    def cmd(name: str, summary: str, *examples: str) -> argparse.ArgumentParser:
+        """A subparser that carries a one-line summary (shown in the command
+        list) and worked examples (shown in `sift <cmd> -h`). Leading with an
+        example is the single most useful thing a command's help can do."""
+        return sub.add_parser(
+            name, help=summary, description=summary,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="example:\n" + "\n".join("  " + e for e in examples))
+
+    s = cmd("init", "scaffold sift's tracked files into this repo",
+            "sift init", "sift init --dry-run")
     s.add_argument("--migrate-openwolf", action="store_true")
     s.add_argument("--no-githooks", action="store_true")
     s.add_argument("--no-skills", action="store_true")
@@ -68,55 +81,76 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--yes", action="store_true")
     s.add_argument("--dry-run", action="store_true")
 
-    s = sub.add_parser("doctor")
+    s = cmd("doctor", "check the installation, and optionally repair it",
+            "sift doctor", "sift doctor --fix")
     s.add_argument("--fix", action="store_true")
     s.add_argument("--check-upstream", action="store_true")
 
-    sub.add_parser("version")
+    cmd("version", "show the installed runtime and whether the clone would change it",
+        "sift version")
 
-    s = sub.add_parser("scan")
+    s = cmd("scan", "rescan changed files and refresh the index",
+            "sift scan", "sift scan --full")
     s.add_argument("--full", action="store_true")
 
-    s = sub.add_parser("describe")
+    s = cmd("describe", "read or set a file's one-line description",
+            "sift describe --pending",
+            'sift describe --set src/app.ts "HTTP entrypoint"',
+            "sift describe --get src/app.ts")
     s.add_argument("--pending", action="store_true")
     s.add_argument("--top", type=int, default=20)
     s.add_argument("--set", dest="set_", nargs=2, metavar=("PATH", "DESC"))
     s.add_argument("--get", metavar="PATH")
 
-    s = sub.add_parser("map")
+    s = cmd("map", "sizes and symbol ranges to read instead of a whole file",
+            "sift map src/siftlib", "sift map src/sift.py")
     s.add_argument("target")
     s.add_argument("--top", type=int, default=DEFAULT_LINES)
 
-    s = sub.add_parser("search")
+    s = cmd("search", "search the sift docs and file descriptions",
+            'sift search "token budget"', 'sift search "ledger" --layer docs')
     s.add_argument("query")
     s.add_argument("--top", type=int, default=10)
     s.add_argument("--layer", choices=["docs", "files", "all"], default="all")
 
-    s = sub.add_parser("lint")
+    s = cmd("lint", "check the sift directory for secrets, stray paths and broken links",
+            "sift lint", "sift lint --staged")
     s.add_argument("--staged", action="store_true")
     s.add_argument("--ci", action="store_true")
     s.add_argument("--fast", action="store_true")
     s.add_argument("--only", default=None)
 
-    s = sub.add_parser("log")
+    s = cmd("log", "append a note to the journal",
+            'sift log --kind session --detail "shipped ledger --all"')
     s.add_argument("--kind", required=True, choices=list(journal_mod.KINDS))
     s.add_argument("--detail", required=True)
     s.add_argument("--files", nargs="+", default=[])
     s.add_argument("--tags", nargs="+", default=[])
 
-    s = sub.add_parser("bug")
-    bsub = s.add_subparsers(dest="bug_cmd")
-    b = bsub.add_parser("add")
+    s = cmd("bug", "record a fixed bug, or find a known one",
+            'sift bug find "ECONNRESET"',
+            'sift bug add --error "..." --root-cause "..." --fix "..."')
+    bsub = s.add_subparsers(dest="bug_cmd", metavar="{add,find}")
+    b = bsub.add_parser("add", help="record a fixed bug",
+                        description="record a fixed bug",
+                        formatter_class=argparse.RawDescriptionHelpFormatter,
+                        epilog='example:\n  sift bug add --error "timeout" '
+                               '--root-cause "no retry" --fix "added backoff"')
     b.add_argument("--error", required=True)
     b.add_argument("--root-cause", dest="root_cause", default="")
     b.add_argument("--fix", default="")
     b.add_argument("--files", nargs="+", default=[])
     b.add_argument("--tags", nargs="+", default=[])
-    b = bsub.add_parser("find")
+    b = bsub.add_parser("find", help="find a known bug by error text",
+                        description="find a known bug by error text",
+                        formatter_class=argparse.RawDescriptionHelpFormatter,
+                        epilog='example:\n  sift bug find "timeout"')
     b.add_argument("query")
     b.add_argument("--top", type=int, default=5)
 
-    s = sub.add_parser("decide")
+    s = cmd("decide", "record a decision worth remembering",
+            'sift decide "Use BM25 for search" --context "..." '
+            '--decision "..." --consequences "..."')
     s.add_argument("title")
     s.add_argument("--context", default="")
     s.add_argument("--decision", default="")
@@ -124,17 +158,47 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--files", nargs="+", default=[])
     s.add_argument("--supersedes", default="")
 
-    s = sub.add_parser("decisions")
+    s = cmd("decisions", "read recorded decisions back",
+            "sift decisions", "sift decisions D-20260917-03 --markdown")
     s.add_argument("id", nargs="?")
     s.add_argument("--markdown", action="store_true")
 
-    s = sub.add_parser("ledger")
+    s = cmd("ledger", "what the index and governor saved this period",
+            "sift ledger", "sift ledger --all", "sift ledger --since 30.days")
     s.add_argument("--since", default="7.days")
+    s.add_argument("--all", action="store_true",
+                   help="totals across every sift repo found under --root")
+    s.add_argument("--root", default=None,
+                   help="where --all searches (default: your home directory)")
 
-    s = sub.add_parser("import")
+    s = cmd("import", "import content from another tool into sift",
+            "sift import --from-openwolf --dry-run",
+            "sift import --from-openwolf")
     s.add_argument("--from-openwolf", dest="from_openwolf", action="store_true")
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--yes", action="store_true")
+
+    s = cmd("config", "read or set a validated config value",
+            "sift config get hooks.big_read_mode",
+            "sift config set hooks.big_read_mode deny",
+            "sift config set hooks.big_read_mode deny --all")
+    csub = s.add_subparsers(dest="config_cmd", metavar="{get,set}")
+    cg = csub.add_parser("get", help="print the effective value of a config key",
+                         description="print the effective value of a config key",
+                         formatter_class=argparse.RawDescriptionHelpFormatter,
+                         epilog="example:\n  sift config get governance.enabled")
+    cg.add_argument("key")
+    cs = csub.add_parser("set", help="set one config key (validated)",
+                         description="set one config key, validated against the schema",
+                         formatter_class=argparse.RawDescriptionHelpFormatter,
+                         epilog="example:\n  sift config set hooks.big_read_mode deny\n"
+                                "  sift config set governance.enabled true --all")
+    cs.add_argument("key")
+    cs.add_argument("value")
+    cs.add_argument("--all", action="store_true",
+                    help="set it in every installed repo found under --root")
+    cs.add_argument("--root", default=None,
+                    help="where --all searches (default: your home directory)")
 
     return p
 
@@ -147,9 +211,18 @@ class App:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.cmd = args.cmd
-        self.out = util.Out(self.cmd, VERSION, args.json_mode, args.quiet)
-        self.ctx = paths.resolve(Path.cwd(), args.sift_dir or getattr(args, "dir", None))
-        self.cfg = config_mod.load(self.ctx.config_path)
+        self.out = util.Out(self.cmd, VERSION, args.json_mode, args.quiet,
+                            color=getattr(args, "color", "auto"))
+        try:
+            self.ctx = paths.resolve(Path.cwd(), args.sift_dir or getattr(args, "dir", None))
+        except paths.NotARepo:
+            # The fleet commands act on repos found under your home directory,
+            # not on the one you are standing in, so they run from anywhere -
+            # including a bare parent folder that holds many repos but is none.
+            if _needs_repo(args):
+                raise
+            self.ctx = None
+        self.cfg = config_mod.load(self.ctx.config_path) if self.ctx is not None else None
 
     # -- helpers ------------------------------------------------------------
     def truncated(self, rows: List[Any], top: int) -> List[Any]:
@@ -158,8 +231,9 @@ class App:
         return rows[:top]
 
     def more_note(self, total: int, top: int) -> None:
-        if total > top:
-            self.out.line("({} more — use --top)".format(total - top))
+        note = util.truncate_note(total, top)
+        if note:
+            self.out.line(note)
 
     # -- commands -----------------------------------------------------------
     def cmd_init(self) -> int:
@@ -206,7 +280,7 @@ class App:
                         self.out.line("  " + line)
                 if dry_run:
                     self.out.line("")
-                    self.out.line("(dry run — nothing was written)")
+                    self.out.line("(dry run - nothing was written)")
                 else:
                     removed = self._offer_removal(mig_mod, args)
                     data["openwolf"]["guards"] = self._offer_guard_rescope(
@@ -233,15 +307,16 @@ class App:
                     if len(items) > 20:
                         self.out.line("  … and {} more".format(len(items) - 20))
             self.out.line("")
-            self.out.line("Next: sift doctor, then sift scan, then read "
-                          + self.ctx.dir_name + "/conventions.md")
+            self.out.line("Next: {}, then {}, then read {}/conventions.md".format(
+                self.out.action("sift doctor"), self.out.action("sift scan"),
+                self.ctx.dir_name))
             self._say_pending()
         self.out.emit(data)
         return EXIT_OK
 
     def _offer_removal(self, mig_mod, args) -> Optional[dict]:
         """Offer to finish the job. Ruling 11 keeps the deletion on a keystroke,
-        which is what the prompt is — but a keystroke is not four commands, and
+        which is what the prompt is - but a keystroke is not four commands, and
         `--yes` is not a keystroke about this, so it still only gets the list."""
         plan = mig_mod.removal_plan(self.ctx)
         if not (plan["wolf"] or plan["rules"]):
@@ -271,7 +346,7 @@ class App:
             return None
         self.out.line("")
         self.out.line("These check for secrets or private material, but only "
-                      "inside .wolf/ — which no longer exists:")
+                      "inside .wolf/ - which no longer exists:")
         for item in plan:
             self.out.line("  " + item["path"])
         self.out.line("")
@@ -282,7 +357,7 @@ class App:
                           "everything.".format(self.ctx.dir_name))
             return None
         if not self._ask("Point them at {}/ instead?".format(self.ctx.dir_name)):
-            self.out.line("Left alone — but until they point at {}/, they pass "
+            self.out.line("Left alone - but until they point at {}/, they pass "
                           "everything.".format(self.ctx.dir_name))
             return None
         applied = mig_mod.apply_traces(self.ctx, plan)
@@ -296,7 +371,7 @@ class App:
             return []
         self.out.line("")
         self.out.line("These send a reader to the imported cerebrum, which is now "
-                      "in {}/local/ and gitignored — for a colleague the pointer "
+                      "in {}/local/ and gitignored - for a colleague the pointer "
                       "is dead. Promote what they rely on, or inline it:".format(
                           self.ctx.dir_name))
         for item in pointers[:10]:
@@ -322,7 +397,7 @@ class App:
             self.out.line("")
             self.out.line("Still mentioning OpenWolf:")
             for item in plan:
-                self.out.line("  {} — {}".format(item["path"], item["what"]))
+                self.out.line("  {} - {}".format(item["path"], item["what"]))
             self.out.line("")
             self.out.line(mig_mod.trace_diff(plan))
             if self._ask("Apply that and leave no trace?"):
@@ -362,7 +437,7 @@ class App:
             return None
         self.out.line("")
         if not self._ask('Commit that as "{}"?'.format(mig_mod.COMMIT_MESSAGE)):
-            self.out.line("Left staged — commit it when you are ready.")
+            self.out.line("Left staged - commit it when you are ready.")
             return None
         result = mig_mod.commit(self.ctx)
         self.out.line("")
@@ -370,7 +445,7 @@ class App:
             self.out.line("  " + line)
         if not result["ok"]:
             self.out.line("")
-            self.out.line("Not committed — a hook refused it. Nothing is lost; it "
+            self.out.line("Not committed - a hook refused it. Nothing is lost; it "
                           "stays staged.")
         return result
 
@@ -421,14 +496,14 @@ class App:
         if data["state"] == upgrade_mod.SELF and data["clone"]:
             data["bump"] = upgrade_mod.bump_needed(Path(data["clone"]))
         if not self.out.json_mode:
-            self.out.line("sift {} — {}".format(data["installed"], data["sift_dir"]))
+            self.out.line("sift {} - {}".format(data["installed"], data["sift_dir"]))
             if data["clone"]:
-                self.out.line("clone {} — {}{}".format(
+                self.out.line("clone {} - {}{}".format(
                     data["clone_version"], data["clone"],
                     " (this repo)" if data["state"] == upgrade_mod.SELF else ""))
             self.out.line(data["detail"])
             if data["state"] in upgrade_mod.STALE:
-                self.out.line("run: sift update")
+                self.out.line("run: " + self.out.action("sift update"))
             bump = data.get("bump") or {}
             if bump.get("needed"):
                 self.out.line("")
@@ -439,10 +514,12 @@ class App:
     def cmd_scan(self) -> int:
         data = scan_mod.run_scan(self.ctx, self.cfg, full=self.args.full)
         if not self.out.json_mode:
-            self.out.line("{} files scanned, {} changed, {} need descriptions".format(
-                data["files"], data["changed"], data["pending_descriptions"]))
+            self.out.line("{} scanned, {} changed, {} need a description".format(
+                util.count(data["files"], "file"), util.num(data["changed"]),
+                util.num(data["pending_descriptions"])))
             if data["compacted"]:
-                self.out.line("files.jsonl: {} duplicate lines compacted".format(data["compacted"]))
+                self.out.line("files.jsonl: {} compacted".format(
+                    util.count(data["compacted"], "duplicate line")))
         self.out.emit(data)
         return EXIT_OK
 
@@ -455,7 +532,7 @@ class App:
                 self.out.fail("BAD_PATH", err)
                 return EXIT_USAGE
             if not self.out.json_mode:
-                self.out.line("set: {} — {}".format(rec["path"], rec["desc"]))
+                self.out.line("set: {} - {}".format(rec["path"], rec["desc"]))
             self.out.emit({"path": rec["path"], "hash": rec["hash"]})
             return EXIT_OK
         if args.get:
@@ -468,7 +545,7 @@ class App:
             rows = scan_mod.pending_descriptions(self.ctx, self.cfg)
             shown = self.truncated(rows, args.top)
             if not self.out.json_mode:
-                self.out.line("one line: what this file is *for*")
+                self.out.line("add one line saying what each file is for:")
                 self.out.table([[r["reason"], str(r["churn"]), str(r["tokens"]), r["path"]]
                                 for r in shown], ["why", "churn", "tok", "path"])
                 self.more_note(len(rows), args.top)
@@ -483,6 +560,23 @@ class App:
         if not self.out.json_mode:
             from siftlib import symbols as sym_mod
             dir_rows, here = scan_mod.rollup_map(rows, self.args.target)
+            spec = (self.args.target or ".").rstrip("/")
+            if not dir_rows and len(here) == 1 and here[0]["path"] == spec:
+                # Single-file target: the point is the symbol ranges to read.
+                r = here[0]
+                if r["desc"]:
+                    self.out.line("{}  {} tok  {}".format(r["path"], r["tokens"], r["desc"]))
+                else:
+                    self.out.line("{}  {} tok".format(r["path"], r["tokens"]))
+                if r["symbols"]:
+                    self.out.table(
+                        [[s["name"], s["kind"], "L{}-{}".format(s["start"], s["end"]),
+                          str(s.get("tokens", 0))] for s in r["symbols"]],
+                        ["symbol", "kind", "lines", "tok"])
+                else:
+                    self.out.line("(no symbol ranges - read the whole file)")
+                self.out.emit(shown)
+                return EXIT_OK
             table = []
             for d in dir_rows:
                 noun = "file" if d["files"] == 1 else "files"
@@ -502,7 +596,7 @@ class App:
                                  top=self.args.top, layer=self.args.layer)
         if not self.out.json_mode:
             if not rows:
-                self.out.line("No results for: " + repr(self.args.query))
+                self.out.line('no results for "{}"'.format(self.args.query))
             else:
                 self.out.table([["{:.2f}".format(r["score"]), r["layer"], r["title"],
                                  r["snippet"][:70]] for r in rows],
@@ -527,7 +621,8 @@ class App:
                     self.out.line("  {} {}:{} {}".format(
                         issue["code"], issue["path"], issue["line"], issue["message"]))
                 if len(group) > DEFAULT_LINES:
-                    self.out.line("  ({} more — use --json)".format(len(group) - DEFAULT_LINES))
+                    self.out.line("  ({} more, use --json)".format(
+                        util.num(len(group) - DEFAULT_LINES)))
         self.out.emit({"issues": issues, "summary": summary})
         advisory = bool(self.cfg.get("ci", "advisory", default=True))
         if summary["errors"]:
@@ -576,7 +671,7 @@ class App:
         missing = [f for f in journal_mod.FIELDS if not getattr(self.args, f).strip()]
         if missing:
             self.out.fail("USAGE", "decide needs " + ", ".join("--" + f for f in missing)
-                          + " — a record is written complete, like `bug add`")
+                          + " - a record is written complete, like `bug add`")
             return EXIT_USAGE
         data = journal_mod.add_decision(
             self.ctx, self.args.title, context=self.args.context,
@@ -597,7 +692,7 @@ class App:
                 return EXIT_USAGE
         if not self.out.json_mode:
             if not rows:
-                self.out.line("no decisions recorded — `sift decide` writes one")
+                self.out.line("no decisions recorded - `sift decide` writes one")
             elif self.args.id or self.args.markdown:
                 self.out.line(journal_mod.render_decisions(rows) if self.args.markdown
                               else journal_mod.render_decision(rows[0]))
@@ -611,73 +706,129 @@ class App:
         return EXIT_OK
 
     def cmd_ledger(self) -> int:
+        if self.args.all:
+            return self._ledger_all()
+        if self.args.root:
+            self.out.fail("USAGE", "--root only means something with --all")
+            return EXIT_USAGE
         data = ledger_mod.summarise(self.ctx, self.args.since)
         if not self.out.json_mode:
-            self.out.line("since {}: {} index hits, {} misses, {} duplicate reads caught, "
-                          "{} nudges".format(data["since"], data["index_hits"],
-                                             data["index_misses"],
-                                             data["dup_warned"] + data["dup_denied"],
-                                             data["nudges"]))
-            self.out.line("{:,} tokens avoided, {:,} tokens injected".format(
-                data["tokens_avoided"], data["tokens_injected"]))
-            if data["governed_calls"]:
-                # Measured, unlike the line above: both numbers are the real
-                # output, before and after. Re-runs sit next to the saving
-                # because a condensation the model works around is a loss.
-                self.out.line(
-                    "governance: {} calls condensed {} -> {} tokens "
-                    "({} saved, {:.0f}%), {} re-run".format(
-                        data["governed_calls"], data["governed_original_tokens"],
-                        data["governed_entered_tokens"], data["governed_saved_tokens"],
-                        100.0 * data["governed_saved_tokens"]
-                        / max(1, data["governed_original_tokens"]),
-                        data["governed_reruns"]))
-                for family, count in sorted(data["governed_families"].items()):
-                    self.out.line("  {:<12} {}".format(family, count))
-            else:
-                # Which branch to print is the setting's business, not the
-                # event count's. Telling someone to turn on a setting they
-                # have already turned on is how a report loses its reader.
-                on = bool(self.cfg.get("governance", "enabled", default=False))
-                state = "on" if on else "off"
-                if data["floods_seen"] and on:
-                    self.out.line(
-                        "governance: on, {} command(s) over the threshold and "
-                        "none condensed yet this period — the ones counted "
-                        "here ran before it was on.".format(data["floods_seen"]))
-                elif data["floods_seen"]:
-                    # The whole reason `advise` counts these: with condensation
-                    # off there is otherwise no signal that it would have paid.
-                    self.out.line(
-                        "governance: off, but {} command(s) went over the "
-                        "threshold. Turn it on with governance.enabled if you "
-                        "want those condensed.".format(data["floods_seen"]))
-                else:
-                    self.out.line(
-                        "governance: {}, and nothing went over the threshold "
-                        "this period — nothing for it to do.".format(state))
-            if data.get("read_floods"):
-                # The Read tool's floods, beside Bash's. On the first repo
-                # measured they outnumbered the Bash floods five to one.
-                mode = str(self.cfg.get("hooks", "big_read_mode", default="off"))
-                self.out.line(
-                    "reads: {} whole-file read(s) over the threshold ({:,} tokens), "
-                    "{} refused once and given ranges (big_read_mode: {}{})".format(
-                        data["read_floods"], data["read_flood_tokens"],
-                        data["big_reads_denied"], mode,
-                        "" if mode == "deny"
-                        else " -- set it to deny to turn these into ranged reads"))
-            cost, saved = data.get("carry_cost") or 0, data.get("carry_saved") or 0
-            if cost or saved:
-                # The figures above are what a payload weighed once. These are
-                # what it weighed for every turn that followed, which is the
-                # number that decides whether any of this is worth doing.
-                self.out.line(
-                    "context carry: {:,} tokens carried, {:,} kept out by "
-                    "condensing ({}; mostly cache reads, so do not price them "
-                    "as fresh)".format(cost, saved, data["carry_basis"]))
+            self._print_ledger(data, advise=True)
         self.out.emit(data)
         return EXIT_OK
+
+    def _ledger_all(self) -> int:
+        from pathlib import Path
+        root = (Path(self.args.root).expanduser() if self.args.root
+                else Path.home()).resolve()
+        if not root.is_dir():
+            self.out.fail("ENV", "{} is not a directory".format(root))
+            return EXIT_ENV
+        summary = ledger_mod.summarise_all(root, self.args.since)
+        if not self.out.json_mode:
+            self.out.line("since {}: ledger data in {} of {} under {}".format(
+                summary["since"], util.num(summary["repo_count"]),
+                util.count(summary["repos_found"], "repo"), summary["root"]))
+            if summary["repos"]:
+                self.out.line("")
+                # One aligned table, not a hand-rolled column, so the per-repo
+                # figures line up under the same rules as every other table.
+                self.out.table(
+                    [[r["repo"], util.num(r["index_hits"]),
+                      util.num(r["dup_warned"] + r["dup_denied"]),
+                      util.num(r["floods_seen"]), util.num(r["read_floods"])]
+                     for r in summary["repos"]],
+                    ["repo", "hits", "caught", "floods", "reads"])
+            if summary["repo_count"]:
+                self.out.line("")
+                self.out.line("total across {}:".format(
+                    util.count(summary["repo_count"], "repo")))
+                # No repo's config decides a machine-wide total, so the advisory
+                # "turn it on" lines are left off here: they are per-repo.
+                self._print_ledger(summary["total"], advise=False)
+            if summary["idle"]:
+                # Named, not just counted: the header says how many are idle,
+                # this says which, so the gap is actionable without a script.
+                self.out.line("")
+                self.out.line("{} with no ledger data in this window: {}".format(
+                    util.count(len(summary["idle"]), "installed repo"),
+                    ", ".join(summary["idle"])))
+        self.out.emit(summary)
+        return EXIT_OK
+
+    def _print_ledger(self, data: dict, advise: bool) -> None:
+        self.out.line("since {}: {} index hits, {} misses, {} duplicate reads caught, "
+                      "{} nudges".format(data["since"], data["index_hits"],
+                                         data["index_misses"],
+                                         data["dup_warned"] + data["dup_denied"],
+                                         data["nudges"]))
+        self.out.line("{:,} tokens avoided, {:,} tokens injected".format(
+            data["tokens_avoided"], data["tokens_injected"]))
+        if data["governed_calls"]:
+            # Measured, unlike the line above: both numbers are the real
+            # output, before and after. Re-runs sit next to the saving
+            # because a condensation the model works around is a loss.
+            self.out.line(
+                "governance: {} calls condensed {} -> {} tokens "
+                "({} saved, {:.0f}%), {} re-run".format(
+                    data["governed_calls"], data["governed_original_tokens"],
+                    data["governed_entered_tokens"], data["governed_saved_tokens"],
+                    100.0 * data["governed_saved_tokens"]
+                    / max(1, data["governed_original_tokens"]),
+                    data["governed_reruns"]))
+            for family, count in sorted(data["governed_families"].items()):
+                self.out.line("  {:<12} {}".format(family, count))
+        elif advise:
+            # Which branch to print is the setting's business, not the event
+            # count's. Telling someone to turn on a setting they have already
+            # turned on is how a report loses its reader. Only meaningful for one
+            # repo -- a machine-wide total has no single setting to advise on.
+            on = bool(self.cfg.get("governance", "enabled", default=False))
+            state = "on" if on else "off"
+            if data["floods_seen"] and on:
+                self.out.line(
+                    "governance: on, {} over the threshold and none condensed "
+                    "yet this period - the ones counted here ran before it "
+                    "was on.".format(util.count(data["floods_seen"], "command")))
+            elif data["floods_seen"]:
+                # The whole reason `advise` counts these: with condensation
+                # off there is otherwise no signal that it would have paid.
+                self.out.line(
+                    "governance: off, but {} went over the threshold. Turn it "
+                    "on with governance.enabled if you want those "
+                    "condensed.".format(util.count(data["floods_seen"], "command")))
+            else:
+                self.out.line(
+                    "governance: {}, and nothing went over the threshold "
+                    "this period - nothing for it to do.".format(state))
+        elif data["floods_seen"]:
+            self.out.line("governance: {} over the threshold, none "
+                          "condensed.".format(util.count(data["floods_seen"], "command")))
+        if data.get("read_floods"):
+            # The Read tool's floods, beside Bash's. On the first repo
+            # measured they outnumbered the Bash floods five to one. The
+            # big_read_mode advice is per-repo, so a total only states the count.
+            suffix = ""
+            if advise:
+                mode = str(self.cfg.get("hooks", "big_read_mode", default="off"))
+                suffix = " (big_read_mode: {}{})".format(
+                    mode, "" if mode == "deny"
+                    else " - set it to deny to turn these into ranged reads")
+            self.out.line(
+                "reads: {} over the threshold ({} tokens), "
+                "{} refused once and given ranges{}".format(
+                    util.count(data["read_floods"], "whole-file read"),
+                    util.num(data["read_flood_tokens"]),
+                    util.num(data["big_reads_denied"]), suffix))
+        cost, saved = data.get("carry_cost") or 0, data.get("carry_saved") or 0
+        if cost or saved:
+            # The figures above are what a payload weighed once. These are
+            # what it weighed for every turn that followed, which is the
+            # number that decides whether any of this is worth doing.
+            self.out.line(
+                "context carry: {:,} tokens carried, {:,} kept out by "
+                "condensing ({}; mostly cache reads, so do not price them "
+                "as fresh)".format(cost, saved, data["carry_basis"]))
 
     def cmd_import(self) -> int:
         if not self.args.from_openwolf:
@@ -708,14 +859,102 @@ class App:
         self.out.emit(data)
         return EXIT_OK
 
+    def cmd_config(self) -> int:
+        sub = getattr(self.args, "config_cmd", None)
+        if sub == "get":
+            return self._config_get()
+        if sub == "set":
+            return self._config_set()
+        self.out.fail("USAGE", "config needs `get` or `set`")
+        return EXIT_USAGE
+
+    @staticmethod
+    def _fmt_config(value: Any) -> str:
+        # Booleans read as the words the setter accepts, so `get` and `set`
+        # speak the same language; everything else is its plain string.
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
+
+    def _config_get(self) -> int:
+        key = self.args.key
+        path, default = config_mod.lookup_default(key)
+        if path is None:
+            self.out.fail("USAGE", "unknown config key: " + key)
+            return EXIT_USAGE
+        value = self.cfg.get(*path, default=default)
+        if not self.out.json_mode:
+            self.out.line("{} = {}".format(key, self._fmt_config(value)))
+        self.out.emit({"key": key, "value": value})
+        return EXIT_OK
+
+    def _config_set(self) -> int:
+        key, raw = self.args.key, self.args.value
+        path, default = config_mod.lookup_default(key)
+        if path is None:
+            self.out.fail("USAGE", "unknown config key: " + key)
+            return EXIT_USAGE
+        value, err = config_mod.coerce_value(default, raw)
+        if err:
+            self.out.fail("USAGE", "{}: {}".format(key, err))
+            return EXIT_USAGE
+        eerr = config_mod.enum_error(key, value)
+        if eerr:
+            self.out.fail("USAGE", eerr)
+            return EXIT_USAGE
+        if self.args.all:
+            return self._config_set_all(key, value)
+        err = config_mod.set_value(self.ctx.config_path, key, value)
+        if err:
+            self.out.fail("ENV", err)
+            return EXIT_ENV
+        if not self.out.json_mode:
+            self.out.line("set {} = {} in {}".format(
+                key, self._fmt_config(value), self.ctx.dir_name))
+        self.out.emit({"key": key, "value": value})
+        return EXIT_OK
+
+    def _config_set_all(self, key: str, value: Any) -> int:
+        from pathlib import Path
+        from siftlib import upgrade as upgrade_mod
+        root = (Path(self.args.root).expanduser() if self.args.root
+                else Path.home()).resolve()
+        if not root.is_dir():
+            self.out.fail("ENV", "{} is not a directory".format(root))
+            return EXIT_ENV
+        repos = upgrade_mod.discover(root)
+        done: List[str] = []
+        failed: List[Dict[str, str]] = []
+        for repo in repos:
+            ctx = paths.Ctx(repo, paths.resolve_dir_name(repo))
+            try:
+                rel = str(repo.relative_to(root))
+            except ValueError:
+                rel = str(repo)
+            err = config_mod.set_value(ctx.config_path, key, value)
+            if err:
+                failed.append({"repo": rel, "error": err})
+            else:
+                done.append(rel)
+        if not self.out.json_mode:
+            self.out.line("set {} = {} in {} under {}".format(
+                key, self._fmt_config(value), util.count(len(done), "repo"), root))
+            for rel in done:
+                self.out.line("  " + rel)
+            for item in failed:
+                self.out.line("  {}: {}".format(item["repo"], item["error"]))
+        self.out.emit({"key": key, "value": value, "set": done, "failed": failed})
+        return EXIT_FINDINGS if failed else EXIT_OK
+
     def dispatch(self) -> int:
         handler = getattr(self, "cmd_" + self.cmd.replace("-", "_"), None)
         if handler is None:
             self.out.fail("USAGE", "unknown command: " + str(self.cmd))
             return EXIT_USAGE
-        if self.cmd not in ("init", "doctor", "version") and not self.ctx.exists:
-            self.out.fail("NO_SIFT", "no sift directory at {} — run `sift init`".format(
-                self.ctx.rel(self.ctx.dir)))
+        if (self.ctx is not None and self.cmd not in ("init", "doctor", "version")
+                and not self.ctx.exists):
+            self.out.fail("NO_SIFT", "no sift directory at {}, run: {}".format(
+                self.ctx.rel(self.ctx.dir), self.out.action("sift init", err=True)))
             return EXIT_ENV
         return handler()
 
@@ -725,16 +964,28 @@ def _bump_note(bump: Dict[str, Any]) -> str:
     where someone is already asking what version this is."""
     parts = []
     if bump.get("commits"):
-        parts.append("{} commit{} since it was set".format(
-            len(bump["commits"]), "" if len(bump["commits"]) == 1 else "s"))
+        parts.append(util.count(len(bump["commits"]), "commit") + " since it was set")
     if bump.get("dirty"):
         parts.append("uncommitted: " + ", ".join(bump["dirty"][:4]))
-    return "VERSION {} is owed a bump — shipped content changed ({}).".format(
+    return "VERSION {} is owed a bump, shipped content changed ({}).".format(
         bump.get("version") or "?", "; ".join(parts))
 
 
+def _needs_repo(args: argparse.Namespace) -> bool:
+    """Most commands act on the repo you are standing in and cannot run without
+    one. The fleet commands are the exception: they walk from your home
+    directory (`--root` to change it) and add up or write across every installed
+    repo, so they need no repo of their own and run from anywhere."""
+    if args.cmd == "ledger" and getattr(args, "all", False):
+        return False
+    if (args.cmd == "config" and getattr(args, "config_cmd", None) == "set"
+            and getattr(args, "all", False)):
+        return False
+    return True
+
+
 GLOBAL_SWITCHES = ("--json", "--quiet")
-GLOBAL_OPTIONS = ("--sift-dir",)
+GLOBAL_OPTIONS = ("--sift-dir", "--color")
 
 
 def hoist_globals(argv: Sequence[str]) -> List[str]:
@@ -774,7 +1025,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         app = App(args)
     except paths.NotARepo as exc:
-        out = util.Out(args.cmd, VERSION, args.json_mode, args.quiet)
+        out = util.Out(args.cmd, VERSION, args.json_mode, args.quiet,
+                       color=getattr(args, "color", "auto"))
         out.fail("NOT_A_REPO", str(exc))
         return EXIT_ENV
     try:

@@ -169,3 +169,73 @@ def validate(path: Path) -> Tuple[List[str], List[str]]:
 def default_json() -> str:
     import json
     return json.dumps(DEFAULTS, indent=2, ensure_ascii=False) + "\n"
+
+
+def lookup_default(dotted: str) -> Tuple[Any, Any]:
+    """(path tuple, default value) for a dotted key, or (None, None) if it is
+    not a known key. Only keys that exist in DEFAULTS can be set, so a typo is
+    rejected rather than written -- the same stance `doctor` takes on read."""
+    parts = dotted.split(".")
+    node: Any = DEFAULTS
+    for part in parts:
+        if not isinstance(node, dict) or part not in node:
+            return None, None
+        node = node[part]
+    return tuple(parts), node
+
+
+def coerce_value(default: Any, raw: str) -> Tuple[Any, Any]:
+    """Coerce a CLI string to the type of `default`. Returns (value, None) or
+    (None, error). Structured values (dict/list) are not settable from the CLI:
+    a list of extensions or hard-fail codes is edited in the file, not typed."""
+    if isinstance(default, bool):
+        low = raw.strip().lower()
+        if low in ("true", "on", "yes", "1"):
+            return True, None
+        if low in ("false", "off", "no", "0"):
+            return False, None
+        return None, "expected true or false"
+    if isinstance(default, int):
+        try:
+            return int(raw), None
+        except ValueError:
+            return None, "expected an integer"
+    if isinstance(default, float):
+        try:
+            return float(raw), None
+        except ValueError:
+            return None, "expected a number"
+    if isinstance(default, (dict, list)):
+        return None, "structured value; edit config.json by hand"
+    return raw, None
+
+
+def enum_error(dotted: str, value: Any) -> Any:
+    """An ENUM message if `value` is not allowed for `dotted`, else None."""
+    parts = tuple(dotted.split("."))
+    allowed = ENUMS.get(parts)
+    if allowed is not None and value not in allowed:
+        return "{} must be one of {}".format(dotted, ", ".join(sorted(allowed)))
+    return None
+
+
+def set_value(path: Path, dotted: str, value: Any) -> Any:
+    """Write one key into config.json, preserving every other key and its
+    order, and return an error string or None. The caller has already checked
+    the key is known and the value is the right type and an allowed enum."""
+    import json
+    raw = util.read_json(path, default={})
+    if not isinstance(raw, dict):
+        raw = {}
+    parts = dotted.split(".")
+    node = raw
+    for part in parts[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            node[part] = child
+        node = child
+    node[parts[-1]] = value
+    if not util.atomic_write(path, json.dumps(raw, indent=2, ensure_ascii=False) + "\n"):
+        return "could not write config.json (readonly?)"
+    return None

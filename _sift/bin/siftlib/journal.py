@@ -1,4 +1,4 @@
-"""`log`, `bug` and `decide` — the only writers to journal.jsonl and decisions.jsonl.
+"""`log`, `bug` and `decide` - the only writers to journal.jsonl and decisions.jsonl.
 
 One writer means one format, which is what makes `merge=union` safe and
 `bug find` reliable. Both files are append-only; a decision is superseded by a
@@ -71,8 +71,8 @@ def _quarantined(ctx: Ctx) -> List[dict]:
 
     A migration quarantines an entry when it carries a secret or a path outside
     the repo, and writes it to `local/` rather than dropping it. Leaving it out
-    of `bug find` meant the one question the journal exists to answer — has this
-    been debugged before? — was answered "no" by a repo holding the answer.
+    of `bug find` meant the one question the journal exists to answer - has this
+    been debugged before? - was answered "no" by a repo holding the answer.
     They are marked `local`, so nothing copies one into a commit by reflex.
     """
     out: List[dict] = []
@@ -172,14 +172,14 @@ def add_decision(ctx: Ctx, title: str, context: str = "", decision: str = "",
     if supersedes:
         rec["supersedes"] = supersedes
     util.append_line(ctx.decisions, util.jdump(rec))
-    heading = "{} — {}".format(did, rec["title"])
+    heading = "{} - {}".format(did, rec["title"])
     append(ctx, "decision-ref", heading)
     return dict(rec, anchor=_anchor(heading), heading=heading)
 
 
 def render_decision(rec: dict) -> str:
     """One record as the markdown it used to be stored as."""
-    out = ["## {} — {}".format(rec.get("id", ""), rec.get("title", "")), ""]
+    out = ["## {} - {}".format(rec.get("id", ""), rec.get("title", "")), ""]
     out.append("- **Date:** " + str(rec.get("ts", ""))[:10])
     out.append("- **By:** " + str(rec.get("who", "")))
     if rec.get("files"):
@@ -195,7 +195,7 @@ def render_decision(rec: dict) -> str:
 
 
 def render_decisions(recs: Sequence[dict]) -> str:
-    head = ("# Decisions\n\nDated records of *why*, newest last, never deleted — "
+    head = ("# Decisions\n\nDated records of *why*, newest last, never deleted - "
             "superseded instead.\nRendered from `decisions.jsonl` by `sift decisions "
             "--markdown`; edit that, not this.\n")
     return head + "".join("\n" + render_decision(r) + "\n" for r in recs)

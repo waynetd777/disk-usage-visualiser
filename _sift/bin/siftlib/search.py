@@ -251,7 +251,7 @@ def _documents(ctx: Ctx) -> List[dict]:
 
     from . import journal as journal_mod
     for rec in journal_mod.decisions(ctx):
-        title = "{} — {}".format(rec.get("id", ""), rec.get("title", ""))
+        title = "{} - {}".format(rec.get("id", ""), rec.get("title", ""))
         body = " ".join(str(rec.get(f, "")) for f in journal_mod.FIELDS)
         docs.append({
             "layer": "decision", "id": str(rec.get("id") or "decision"),

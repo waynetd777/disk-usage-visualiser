@@ -26,7 +26,7 @@ from .paths import Ctx
 
 
 def pending(ctx: Ctx, cfg: Config) -> List[Dict[str, Any]]:
-    """[{id, what, how, agent}] — empty when the install is finished."""
+    """[{id, what, how, agent}] - empty when the install is finished."""
     out: List[Dict[str, Any]] = []
     dir_name = ctx.dir_name
 
@@ -38,11 +38,11 @@ def pending(ctx: Ctx, cfg: Config) -> List[Dict[str, Any]]:
                     .format(len(imports), "" if len(imports) == 1 else "s", dir_name),
             "how": "read them and write what is still true into decisions and "
                    "the journal; the specifics stay in local/",
-            "agent": "Read {}/local/openwolf-* in ranges — one is usually far too "
-                     "large to hold at once — and record as you go: `sift decide` "
+            "agent": "Read {}/local/openwolf-* in ranges - one is usually far too "
+                     "large to hold at once - and record as you go: `sift decide` "
                      "for a decision, `sift bug add` for a bug that could recur. "
                      "Anything naming a person, a cost or a path outside the repo "
-                     "stays in local/ — see conventions.md."
+                     "stays in local/ - see conventions.md."
                      .format(dir_name),
         })
 
@@ -52,14 +52,14 @@ def pending(ctx: Ctx, cfg: Config) -> List[Dict[str, Any]]:
             "id": "describe",
             "what": "{} of the {} busiest files have no description".format(
                 len(undescribed_hot), hot_total),
-            "how": "`sift describe --set <path> \"…\"` — the busiest files first; "
+            "how": "`sift describe --set <path> \"…\"` - the busiest files first; "
                    "the rest accrue as you work",
             "agent": "The pre-read hook has nothing to offer for the files this "
                      "repo changes most. Describe these, reading each one first "
                      "if you do not already know it: {}{}"
                      .format(", ".join(undescribed_hot[:12]),
                              "" if len(undescribed_hot) <= 12
-                             else " (and {} more — `sift scan` lists the rest)"
+                             else " (and {} more - `sift scan` lists the rest)"
                                   .format(len(undescribed_hot) - 12)),
         })
 
@@ -79,7 +79,7 @@ def _hot_gap(ctx: Ctx, cfg: Config) -> "tuple[List[str], int]":
 
     Not every file, and not merely one: a 466-file repo reported "nothing left
     to set up" at 49 descriptions, because the check only asked whether any
-    existed. Coverage of everything is the wrong target too — conventions say
+    existed. Coverage of everything is the wrong target too - conventions say
     descriptions accrue as files are worked on, and most files are never
     opened. What the pre-read hook can actually use is a description of the
     files this repo keeps changing, so that is what is asked for.
@@ -104,7 +104,7 @@ def lines(items: List[Dict[str, Any]], dir_name: str) -> List[str]:
     """For a person, at the end of a command."""
     if not items:
         return []
-    out = ["", "Not done yet — the install is wired up, but:"]
+    out = ["", "Not done yet - the install is wired up, but:"]
     for item in items:
         out.append("  - {}".format(item["what"]))
         out.append("      {}".format(item["how"]))
@@ -124,7 +124,7 @@ def user_message(items: List[Dict[str, Any]]) -> str:
     """
     if not items:
         return ""
-    return "sift: this install is not finished — {}. Say \"finish the sift setup\" " \
+    return "sift: this install is not finished - {}. Say \"finish the sift setup\" " \
            "when you want it done.".format("; ".join(i["what"] for i in items))
 
 
@@ -171,7 +171,7 @@ def upgrade_item(ctx: Ctx, cfg: Config,
         "id": "upgrade",
         "state": state["state"],
         "what": what,
-        "how": "`sift update` in this repo — it rewrites {}/bin and the generated "
+        "how": "`sift update` in this repo - it rewrites {}/bin and the generated "
                "blocks, so give it its own commit".format(ctx.dir_name),
         "agent": "{}. Do not run it unprompted: say so, and run `sift update` from "
                  "the repo root only if the person asks for it. It replaces "
@@ -190,7 +190,7 @@ def upgrade_lines(item: Optional[Dict[str, Any]]) -> List[str]:
 def upgrade_user_message(item: Optional[Dict[str, Any]]) -> str:
     if not item:
         return ""
-    return "sift: {} — run `sift update` when it suits you.".format(item["what"])
+    return "sift: {} - run `sift update` when it suits you.".format(item["what"])
 
 
 def upgrade_agent_text(item: Optional[Dict[str, Any]]) -> str:

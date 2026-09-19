@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import util
-from .paths import Ctx
+from .paths import Ctx, resolve_dir_name
 
 # What `init.install_bin` copies, and therefore what an upgrade would replace.
 TOP_FILES = ("sift.py", "hook.sh", "VERSION")
@@ -75,6 +75,55 @@ def find_clone(env: Optional[Dict[str, str]] = None) -> Optional[Path]:
     return None
 
 
+# Directories that never hold a repo of ours. `Library` is the one that
+# matters: cloud-sync providers mount under `Library/CloudStorage`, and a walk
+# through someone's synced notes is both slow and none of this tool's business.
+DISCOVERY_SKIP = {"Library", "Applications", "node_modules", "venv", "vendor",
+                  "__pycache__", "site-packages", "target", "dist", "build"}
+# `~/a/b/c/d/e/repo` is already further down than anyone keeps working repos.
+DISCOVERY_MAX_DEPTH = 6
+
+
+def discover(root: Path, max_depth: int = DISCOVERY_MAX_DEPTH) -> List[Path]:
+    """Every git repo under `root` with a sift runtime in it.
+
+    Found by searching, not from a registry: OpenWolf kept one at
+    `~/.openwolf/registry.json`, nothing ever removed a dead entry, and so its
+    every run had to skip them. A search has nothing to go stale and answers
+    about the disk as it is now. `--all` on any command that acts across repos
+    -- `update`, `ledger` -- shares this one walk.
+
+    The walk stops at each repo rather than descending into it: a repo inside a
+    repo is rare, and walking every working tree in a home directory is what
+    would make this too slow to run. Hidden directories are skipped, so `.git`
+    is something to notice rather than somewhere to go.
+    """
+    found = []
+    stack = [(root, 0)]
+    while stack:
+        current, depth = stack.pop()
+        try:
+            entries = list(os.scandir(str(current)))
+        except OSError:
+            continue
+        if any(e.name == ".git" for e in entries):
+            name = resolve_dir_name(current)
+            if (current / name / "bin" / "sift.py").is_file():
+                found.append(current)
+            continue
+        if depth >= max_depth:
+            continue
+        for entry in entries:
+            if entry.name.startswith(".") or entry.name in DISCOVERY_SKIP:
+                continue
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append((Path(entry.path), depth + 1))
+            except OSError:
+                continue
+    return sorted(found)
+
+
 def status(ctx: Ctx, clone: Optional[Path] = None,
            env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """{state, installed, clone, clone_version, same_bytes, detail}.
@@ -92,7 +141,7 @@ def status(ctx: Ctx, clone: Optional[Path] = None,
     if clone is None:
         clone = find_clone(env)
     if clone is None:
-        out["detail"] = "no sift clone found — nothing to compare against"
+        out["detail"] = "no sift clone found - nothing to compare against"
         return out
 
     out["clone"] = str(clone)
@@ -124,16 +173,16 @@ def status(ctx: Ctx, clone: Optional[Path] = None,
             installed, out["clone_version"])
     elif same:
         out["state"] = CURRENT
-        out["detail"] = "{} — the same runtime the clone would install".format(installed)
+        out["detail"] = "{} - the same runtime the clone would install".format(installed)
     else:
         out["state"] = DIFFERS
-        out["detail"] = ("{} on both sides, but the files differ — the clone has "
+        out["detail"] = ("{} on both sides, but the files differ - the clone has "
                          "changed without a version bump".format(installed))
     return out
 
 
 def bump_needed(clone: Path) -> Dict[str, Any]:
-    """{needed, version, commits, dirty} — shipped content changed since VERSION did.
+    """{needed, version, commits, dirty} - shipped content changed since VERSION did.
 
     Asked of git rather than of a recorded digest: the question is about
     history, and a second copy of the answer on disk is one more thing to keep

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse(Read): describe the file before it is read, and catch re-reads.
 
-The point is not to stop reading; it is to make the read cheaper — a one-line
+The point is not to stop reading; it is to make the read cheaper - a one-line
 description plus symbol ranges usually turns a whole-file read into an
 offset/limit read.
 """
@@ -69,10 +69,10 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
 
     mode = str(h.cfg.get("hooks", "duplicate_read_mode", default="warn"))
     syms = rec.get("symbols") or []
-    bits = ["{} — {}".format(rel, desc) if desc else rel]
-    bits.append("(~{} tok).".format(tokens) if tokens else "(not indexed — `sift scan`).")
+    bits = ["{} - {}".format(rel, desc) if desc else rel]
+    bits.append("(~{} tok).".format(tokens) if tokens else "(not indexed - `sift scan`).")
     if syms and rec.get("blob"):
-        bits.append("Symbols: {} — prefer offset/limit.".format(sym_mod.format_hint(syms)))
+        bits.append("Symbols: {} - prefer offset/limit.".format(sym_mod.format_hint(syms)))
 
     # A whole-file read of a big file, refused once and handed its ranges.
     # This is where the tokens went on the first real sessions: the Read tool
@@ -182,8 +182,8 @@ def _oversized_sift_file(h: "_common.HookCtx", rel: str, raw_path: str,
     if size < limit:
         return None
     text = _common.PREFIX + (
-        "{} is ~{} tok. Read it in ranges and record as you go — `sift decide` "
-        "or `sift bug add` per finding — rather than holding all of it at once."
+        "{} is ~{} tok. Read it in ranges and record as you go - `sift decide` "
+        "or `sift bug add` per finding - rather than holding all of it at once."
         .format(rel, size // 4))
     out: Dict[str, Any] = {"text": None}
     session_mod.mutate(h.ctx, h.session_id,

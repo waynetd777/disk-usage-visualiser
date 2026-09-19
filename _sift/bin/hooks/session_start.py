@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SessionStart: put a compaction snapshot back, and heal the git hooks.
 
-It used to open every session with a status line — page count, staleness,
+It used to open every session with a status line - page count, staleness,
 coverage. Removing the pages took with them the only thing that
 line had to report; a session does not need to be told how many files are
 described before it has been asked anything.
@@ -107,7 +107,7 @@ def _precompact_digest(h: "_common.HookCtx", state: Dict[str, Any]) -> str:
     edited = list(source.get("files_edited") or [])
     if not edited:
         return ""
-    return "session in progress — files edited: {}".format(", ".join(edited[:8]))
+    return "session in progress - files edited: {}".format(", ".join(edited[:8]))
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ BEGIN = "<!-- sift:begin"
 END = "<!-- sift:end -->"
 STANZA_SENTINEL = "# sift:"
 
-# (source relative to templates/, dest relative to root — {dir} expanded, mode)
+# (source relative to templates/, dest relative to root - {dir} expanded, mode)
 # Every generated block says this in its opening marker, and every one behaves
 # that way: `apply_marker_block` rewrites what is between the markers and
 # leaves everything outside them alone. `test_templates` holds the templates to

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PostToolUse(any): re-state the rules that must not be forgotten mid-session.
 
-Instruction compliance decays *within* a session — the only structural effect a
+Instruction compliance decays *within* a session - the only structural effect a
 factorial study of the question found (arXiv 2605.10039, 1,650 sessions), at
 roughly 5.6% lower odds per generated function, with file size showing no
 effect. The remedy is therefore cadence rather than shorter rule files: bring

@@ -1,4 +1,4 @@
-"""`sift init` — scaffold the sift directory and wire it into the repo.
+"""`sift init` - scaffold the sift directory and wire it into the repo.
 
 Everything it writes comes from the manifest in `templates.py`, so "what gets
 installed" is a table you can read rather than a sequence of writes you have to
@@ -131,8 +131,8 @@ def install_githooks(ctx: Ctx, troot: Path, subs: Dict[str, str]) -> Dict[str, A
                 else:
                     out["githooks"].append(ctx.rel(dest) + " (already current)")
                 continue
-            # Wrap, never concatenate. A hook that ends in `exit 0` — most of
-            # them do — swallows anything appended after it, and the result
+            # Wrap, never concatenate. A hook that ends in `exit 0` - most of
+            # them do - swallows anything appended after it, and the result
             # looks installed while never running once. The repo's own hook
             # moves aside untouched and runs first, keeping its exit code.
             util.atomic_write(kept, current)

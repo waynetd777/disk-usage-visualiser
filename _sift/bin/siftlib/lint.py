@@ -1,4 +1,4 @@
-"""`sift lint` — the deterministic backstop for the rules that cannot be undone.
+"""`sift lint` - the deterministic backstop for the rules that cannot be undone.
 
 Six checks survive the removal of the pages. Three are hard errors the
 pre-commit hook blocks on -- W15 secrets, W16 out-of-repo absolute paths, W19
@@ -166,7 +166,7 @@ def run(ctx: Ctx, cfg: Config, fast: bool = False,
         leaked = sorted(p for p in tracked if p.startswith(prefix))
         for path in leaked:
             issues.append(Issue("W19", SEV_ERROR, path, 1,
-                                "a file under local/ is tracked by git — local/ is the "
+                                "a file under local/ is tracked by git - local/ is the "
                                 "one place private material is allowed, and it only works "
                                 "while nothing in it is committed",
                                 "git rm --cached '{}' and check the .gitignore stanza "
@@ -192,7 +192,7 @@ def run(ctx: Ctx, cfg: Config, fast: bool = False,
         for did, count in sorted(seen.items()):
             if count > 1:
                 issues.append(Issue("W21", SEV_WARNING, ctx.rel(ctx.decisions), 1,
-                                    "{} records share the id {} — two clones decided on "
+                                    "{} records share the id {} - two clones decided on "
                                     "the same day".format(count, did),
                                     "renumber all but one to the next free id for that "
                                     "date and fix any reference to it"))
@@ -317,7 +317,7 @@ def _secret_scan(issues: List[dict], rel: str, lines: Sequence[str],
                         "W20", SEV_WARNING, rel, i + 1,
                         "reads like HR or compensation material, which is never "
                         "what a committed sift directory is for",
-                        "move it to local/ — that directory is gitignored and exists "
+                        "move it to local/ - that directory is gitignored and exists "
                         "for exactly this"))
                     break
         if want("W15"):

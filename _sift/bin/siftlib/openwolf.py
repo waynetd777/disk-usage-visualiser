@@ -40,7 +40,7 @@ def wolf_dirs(root: Path) -> List[Path]:
 
 
 def detect(root: Path) -> List[Dict[str, str]]:
-    """[{path, what}] — empty when the repo is clean."""
+    """[{path, what}] - empty when the repo is clean."""
     found: List[Dict[str, str]] = []
 
     for wolf in wolf_dirs(root):

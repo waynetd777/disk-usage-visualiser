@@ -160,7 +160,7 @@ class Migration:
         wolf = self.ctx.root / ".wolf"
         self.data["wolf_dir"] = wolf.is_dir()
         if not wolf.is_dir():
-            self.log.append("no .wolf/ directory — nothing to import")
+            self.log.append("no .wolf/ directory - nothing to import")
             return
         self._import_descriptions(wolf)
         self._import_bugs(wolf)
@@ -168,7 +168,7 @@ class Migration:
                                          ("buglog.json", "bugs"))
                   if self.data[key].get("absent")]
         if absent:
-            self.log.append("{}: not in this .wolf/ — nothing to import from {}".format(
+            self.log.append("{}: not in this .wolf/ - nothing to import from {}".format(
                 " and ".join(absent), "them" if len(absent) > 1 else "it"))
         self._copy_verbatim(wolf)
         for path in REVIEW_ONLY:
@@ -328,7 +328,7 @@ class Migration:
                 self.data.setdefault("review_by_hand", []).append(
                     {"path": name, "sections": sections})
                 self.todo.append(
-                    "{} still has {} — left untouched. {}, or rewrite "
+                    "{} still has {} - left untouched. {}, or rewrite "
                     "for {}/:\n{}".format(
                         name,
                         "1 OpenWolf section" if len(sections) == 1
@@ -344,7 +344,7 @@ class Migration:
         """Add `.wolf/` to `.siftignore`.
 
         OpenWolf's hooks rewrote `cerebrum.md` every session, so on a migrated
-        repo it can be the second-hottest file in the whole history — hotter
+        repo it can be the second-hottest file in the whole history - hotter
         than almost all real source. Ignoring it keeps a dead system out of the
         churn ratings that `scan` derives from git history.
         """
@@ -369,8 +369,8 @@ class Migration:
         removed: stripping `.wolf/*` from `.gitignore` un-ignores the whole
         OpenWolf state directory, so the next `git add -A` commits its backups
         and scan state. The comment block above such a rule is also prose
-        somebody wrote — in the repo this was found in, thirteen lines
-        explaining a deliberate per-repo decision — and a migration has no
+        somebody wrote - in the repo this was found in, thirteen lines
+        explaining a deliberate per-repo decision - and a migration has no
         business deleting that unseen. They are inert once `.wolf/` is gone.
         See BUILD-SPEC Ruling 33.
         """
@@ -383,7 +383,7 @@ class Migration:
                     if line.strip().startswith((".wolf/", "!.wolf/"))]
             if hits:
                 self.data["stanzas"].append({"path": name, "lines": hits})
-                self.log.append("{}: {} .wolf/ line{} left alone — inert once "
+                self.log.append("{}: {} .wolf/ line{} left alone - inert once "
                                 ".wolf/ is gone".format(
                                     name, len(hits), "" if len(hits) == 1 else "s"))
 
@@ -484,7 +484,7 @@ def _strip_openwolf_prose(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# "no trace left" — the last pass
+# "no trace left" - the last pass
 # ---------------------------------------------------------------------------
 def _heading_level(line: str) -> int:
     return len(line) - len(line.lstrip("#"))
@@ -548,7 +548,7 @@ def _cut_wolf_rules(text: str) -> str:
 def _is_wolf_rule(s: str) -> bool:
     """An ignore rule for something OpenWolf put there.
 
-    Not only `.wolf/`: the artefacts are scattered — `.claude/rules/openwolf.md`,
+    Not only `.wolf/`: the artefacts are scattered - `.claude/rules/openwolf.md`,
     a `designqc` command and skill, a nested `ui/.wolf/designqc-captures/`. A
     rule naming a path that no longer exists is noise the next reader has to
     rule out by hand.
@@ -579,7 +579,7 @@ def guard_plan(ctx: Ctx) -> List[Dict[str, Any]]:
 
     This is the failure with no symptom. A repo-owned pre-commit hook that
     blocks vault paths "only inside `.wolf/`" keeps passing every commit after
-    the migration, because nothing is inside `.wolf/` any more — the guard is
+    the migration, because nothing is inside `.wolf/` any more - the guard is
     green and guarding nothing, and the directory it should watch is the one
     this tool just created and writes to automatically.
     """
@@ -673,8 +673,8 @@ def stage(ctx: Ctx, paths: List[str]) -> str:
     """Stage exactly what the migration touched and return `git status` for it.
 
     Pathspecs rather than `git add -A`: a migration has no business staging
-    whatever else the person had in flight, and `git commit -am` — what this
-    used to print — would have missed the sift directory entirely, because an
+    whatever else the person had in flight, and `git commit -am` - what this
+    used to print - would have missed the sift directory entirely, because an
     untracked directory is not a modification.
     """
     # A pathspec matching nothing fails the whole `git add`, and several of

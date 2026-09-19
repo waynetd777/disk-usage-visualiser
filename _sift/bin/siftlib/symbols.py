@@ -2,7 +2,7 @@
 
 Line-anchored regexes only. This is an index, not a parser: a symbol runs from
 its declaration line to the line before the next one, which is wrong for nested
-declarations and right for the thing it is used for — telling an agent which
+declarations and right for the thing it is used for - telling an agent which
 `offset`/`limit` to read.
 
 `LANG_PATTERNS` is data. Adding a language is a table entry, not a code change.

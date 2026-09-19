@@ -1,4 +1,4 @@
-"""`.cache/ledger.jsonl` — the proof that the index is earning its keep.
+"""`.cache/ledger.jsonl` - the proof that the index is earning its keep.
 
 Every hook that avoids a read or injects context writes one line; `sift ledger`
 adds them up. Writes are best-effort: a hook must never fail because the cache
@@ -6,9 +6,10 @@ directory is read-only.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import util
+from . import paths, util
 from .paths import Ctx
 
 EVENTS = ("index_hit", "index_miss", "dup_warned", "dup_denied",
@@ -148,6 +149,81 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
         "carry_saved": _carry(spans, carried, "saved"),
         "carry_basis": "turns after each event, per session",
     }
+
+
+# Everything `summarise` returns as a plain running count, and therefore
+# everything `--all` can add up across repos. `governed_families` is a dict and
+# `governed_saved_tokens` is derived from two of these, so both are handled
+# apart; `since` and `carry_basis` are labels every repo shares.
+_SUMMABLE = (
+    "index_hits", "index_misses", "dup_warned", "dup_denied", "ranged_steered",
+    "nudges", "tokens_avoided", "tokens_injected", "governed_calls",
+    "governed_original_tokens", "governed_entered_tokens", "governed_reruns",
+    "floods_seen", "read_floods", "read_flood_tokens", "big_reads_denied",
+    "carry_cost", "carry_saved")
+
+
+def summarise_all(root: Path, since: str = "7.days") -> Dict[str, Any]:
+    """The same summary, added up over every sift repo found under `root`.
+
+    Repos are found by the one shared walk in `upgrade.discover`, not a
+    registry -- the reasons are there. A repo with nothing to show in the window
+    is left out of the per-repo table -- whether it has no ledger at all or a
+    ledger with no events since the cutoff, so the two are not treated
+    differently -- and its name goes in `idle` for the footer instead. So the
+    table is the repos that did something, `idle` is the rest, and
+    `repos_found` is the count the walk actually saw. Carry cost/saving stay
+    summable here: each repo's figure is already the sum over its own sessions,
+    so a machine-wide total is the sum of those.
+    """
+    from . import upgrade  # local: keep the hook-hot `record` path free of it.
+    repos: List[Dict[str, Any]] = []
+    idle: List[str] = []
+    found = upgrade.discover(root)
+    for repo in found:
+        try:
+            name = repo.relative_to(root).as_posix()
+        except ValueError:
+            name = str(repo)
+        ctx = Ctx(repo, paths.resolve_dir_name(repo))
+        data = summarise(ctx, since) if ctx.ledger.exists() else None
+        if data is None or _is_idle(data):
+            idle.append(name)
+            continue
+        repos.append({"repo": name, **data})
+    return {
+        "root": str(root),
+        "since": since,
+        "repos_found": len(found),
+        "repo_count": len(repos),
+        "repos": repos,
+        "idle": idle,
+        "total": _aggregate(repos, since),
+    }
+
+
+def _is_idle(data: Dict[str, Any]) -> bool:
+    """True when a repo's ledger recorded nothing in the window -- every
+    summable count zero and no governed families -- so it is a footer name
+    rather than a table row."""
+    if any(int(data.get(key, 0) or 0) for key in _SUMMABLE):
+        return False
+    return not (data.get("governed_families") or {})
+
+
+def _aggregate(repos: List[Dict[str, Any]], since: str) -> Dict[str, Any]:
+    total: Dict[str, Any] = {"since": since}
+    for key in _SUMMABLE:
+        total[key] = sum(int(r.get(key, 0) or 0) for r in repos)
+    families: Dict[str, int] = {}
+    for r in repos:
+        for family, count in (r.get("governed_families") or {}).items():
+            families[family] = families.get(family, 0) + int(count or 0)
+    total["governed_families"] = families
+    total["governed_saved_tokens"] = max(
+        0, total["governed_original_tokens"] - total["governed_entered_tokens"])
+    total["carry_basis"] = "turns after each event, per session"
+    return total
 
 
 def _carry(spans: Dict[str, int], rows: List[tuple], want: str) -> int:

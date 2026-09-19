@@ -112,7 +112,7 @@ class Ctx:
             and norm != ".." and ":" not in norm.split("/")[0]
 
     def is_sift_path(self, path: str) -> bool:
-        """True for anything under the sift directory — infrastructure, not project."""
+        """True for anything under the sift directory - infrastructure, not project."""
         norm = path.replace("\\", "/")
         return norm == self.dir_name or norm.startswith(self.dir_name + "/")
 

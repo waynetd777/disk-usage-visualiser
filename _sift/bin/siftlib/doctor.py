@@ -1,4 +1,4 @@
-"""`sift doctor` — environment, wiring, and whether the hooks reach a session.
+"""`sift doctor` - environment, wiring, and whether the hooks reach a session.
 
 Every check returns {id, ok, detail, fix}. `--fix` repairs only what is safe to
 repair without a judgement call: cache dirs, `core.hooksPath`, the generated
@@ -94,7 +94,7 @@ def run(ctx: Ctx, cfg: Config, fix: bool = False,
     elif stale:
         detail = "merge=union names {}, which no longer exists".format(", ".join(stale))
     _check(checks, "gitattributes", not missing and not stale, detail,
-           "match .gitattributes to templates/stanza/gitattributes — install.py "
+           "match .gitattributes to templates/stanza/gitattributes - install.py "
            "will not rewrite a stanza it has already written")
 
     ignored = util.read_text(ctx.root / ".gitignore")
@@ -136,7 +136,7 @@ def run(ctx: Ctx, cfg: Config, fix: bool = False,
                 line.strip() in ("exit 0", "exit 1") and not line.startswith((" ", "\t"))
                 for line in before.splitlines())
             _check(checks, "hooks-reachable", not dead,
-                   "sift's block in .githooks/pre-commit is unreachable — an "
+                   "sift's block in .githooks/pre-commit is unreachable - an "
                    "`exit` above it ends the script" if dead
                    else "pre-commit reaches sift's check",
                    "move your own hook to .githooks/pre-commit.local and re-run "
@@ -256,7 +256,7 @@ def run(ctx: Ctx, cfg: Config, fix: bool = False,
            "none" if not left else "; ".join(
                "{} § {} ({} lines)".format(r["path"], r["heading"], r["lines"])
                for r in left[:4]),
-           "delete each section or rewrite it for the sift directory — nothing here was "
+           "delete each section or rewrite it for the sift directory - nothing here was "
            "written by this tool, so it is your call")
 
     # Local, always on: the clone on this machine, if there is one. UNKNOWN is
@@ -266,7 +266,7 @@ def run(ctx: Ctx, cfg: Config, fix: bool = False,
     runtime = upgrade_mod.status(ctx)
     _check(checks, "runtime", runtime["state"] not in upgrade_mod.STALE,
            runtime["detail"] or runtime["state"],
-           "sift update — it replaces {}/bin, so give it its own commit".format(ctx.dir_name))
+           "sift update - it replaces {}/bin, so give it its own commit".format(ctx.dir_name))
 
     if check_upstream:
         checks.append(_upstream_check(ctx))
@@ -282,7 +282,7 @@ def _openwolf_fix(root: Path, found: List[Dict[str, str]]) -> str:
     A repo that stopped tracking `.wolf/` before it migrated has nothing in the
     index to remove, and a hardcoded `git rm --cached .wolf` then exits 128 with
     `fatal: pathspec '.wolf' did not match any files`. The delete after it still
-    runs, so the advice works and reads as if it did not — which is the worst of
+    runs, so the advice works and reads as if it did not - which is the worst of
     the two. `--ignore-unmatch` is what `remove_openwolf` already passes.
     """
     dirs = [str(w.relative_to(root)) for w in openwolf.wolf_dirs(root)]

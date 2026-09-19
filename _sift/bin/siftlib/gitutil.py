@@ -2,7 +2,7 @@
 
 Rules from BUILD-SPEC 4: no `shell=True`, always `-z`/`--porcelain` where an
 option exists, and `check=False` so a git failure is data rather than an
-exception — the tool has to keep working in a shallow CI clone.
+exception - the tool has to keep working in a shallow CI clone.
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def rev_parse(root: Path, ref: str) -> str:
 
 def is_reachable(root: Path, sha: str) -> bool:
     """True when `sha` names a commit object in this clone. False after a
-    squash-merge, a rebase, or in a shallow CI clone — hence the fallbacks."""
+    squash-merge, a rebase, or in a shallow CI clone - hence the fallbacks."""
     if not sha:
         return False
     proc = run(root, ["cat-file", "-e", sha + "^{commit}"])

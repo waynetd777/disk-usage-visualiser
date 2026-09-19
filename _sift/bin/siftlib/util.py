@@ -155,7 +155,7 @@ def estimate_tokens_for_chars(chars: int, ext: str = "") -> int:
 
 
 # ---------------------------------------------------------------------------
-# Frontmatter — a YAML subset: scalars, flow lists, block lists. No PyYAML.
+# Frontmatter - a YAML subset: scalars, flow lists, block lists. No PyYAML.
 # ---------------------------------------------------------------------------
 
 def _scalar(raw: str) -> Any:
@@ -314,22 +314,72 @@ def first_sentence(text: str) -> str:
 # Output envelope
 # ---------------------------------------------------------------------------
 
+# Colour is used only for signal -- an error, or the next command to run --
+# and never for data, matching what the AWS CLI does. It is emitted only to a
+# TTY, so anything piped or captured (every test included) stays plain; it
+# honours NO_COLOR, obeys an explicit --color, and is always off under --json.
+_ANSI = {"red": "1;31", "green": "32", "action": "1;36"}
+# A "plain number" cell: digits, optional thousands commas, decimals, sign. A
+# column of these is right-aligned like a spreadsheet; "L1-20" or "3 files" is
+# text and stays left, which is how the reader tells figures from labels.
+_NUMERIC_CELL = re.compile(r"^-?\d[\d,]*(\.\d+)?$")
+
+
+def _color_on(stream: Any, mode: str, json_mode: bool) -> bool:
+    if json_mode:
+        return False
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    try:
+        return bool(stream.isatty())
+    except Exception:
+        return False
+
+
 class Out:
     """Collects warnings and prints either human text or the JSON envelope."""
 
-    def __init__(self, cmd: str, version: str, json_mode: bool, quiet: bool = False) -> None:
+    def __init__(self, cmd: str, version: str, json_mode: bool, quiet: bool = False,
+                 color: str = "auto") -> None:
         self.cmd = cmd
         self.version = version
         self.json_mode = json_mode
         self.quiet = quiet
         self.warnings: List[str] = []
         self._lines: List[str] = []
+        # Decided once per stream: stdout carries the next-step hints, stderr
+        # carries the errors, and they are not always both a terminal.
+        self._out_color = _color_on(sys.stdout, color, json_mode)
+        self._err_color = _color_on(sys.stderr, color, json_mode)
 
     def warn(self, message: str) -> None:
         self.warnings.append(message)
 
     def line(self, text: str = "") -> None:
         self._lines.append(text)
+
+    def paint(self, text: str, kind: str, err: bool = False) -> str:
+        """Wrap `text` in a semantic colour when its stream allows it.
+
+        `kind` names a meaning (`red`, `green`, `action`), not a raw code, so
+        the palette lives in one place. Returns `text` untouched whenever
+        colour is off -- every non-TTY, NO_COLOR, or --json run -- so callers
+        can paint unconditionally and the plain path is the same string.
+        """
+        on = self._err_color if err else self._out_color
+        code = _ANSI.get(kind)
+        if not on or not code:
+            return text
+        return "\033[{}m{}\033[0m".format(code, text)
+
+    def action(self, text: str, err: bool = False) -> str:
+        """A command the reader should run next. Highlighted on stdout by
+        default, or on stderr (`err=True`) when it is the fix for an error."""
+        return self.paint(text, "action", err=err)
 
     def table(self, rows: List[List[str]], headers: Optional[List[str]] = None) -> None:
         if not rows:
@@ -340,18 +390,36 @@ class Out:
         for row in body:
             for i in range(cols):
                 widths[i] = max(widths[i], len(str(row[i])))
+        numeric = [self._numeric_col(rows, i) for i in range(cols)]
+
+        def justify(value: Any, i: int) -> str:
+            s = str(value)
+            return s.rjust(widths[i]) if numeric[i] else s.ljust(widths[i])
+
         if headers:
-            self.line("  ".join(str(headers[i]).ljust(widths[i]) for i in range(cols)).rstrip())
+            self.line("  ".join(justify(headers[i], i) for i in range(cols)).rstrip())
             self.line("  ".join("-" * widths[i] for i in range(cols)))
         for row in rows:
-            self.line("  ".join(str(row[i]).ljust(widths[i]) for i in range(cols)).rstrip())
+            self.line("  ".join(justify(row[i], i) for i in range(cols)).rstrip())
+
+    @staticmethod
+    def _numeric_col(rows: List[List[str]], i: int) -> bool:
+        seen = False
+        for row in rows:
+            s = str(row[i]).strip()
+            if not s:
+                continue
+            seen = True
+            if not _NUMERIC_CELL.match(s):
+                return False
+        return seen
 
     def flush(self) -> None:
         """Write what has been collected so far, now, and keep collecting.
 
         Anything that asks the user a question calls this first. `emit` runs at
         the end of the command, so without it the question reaches the screen
-        ahead of the output it is about — which is how you get asked to approve
+        ahead of the output it is about - which is how you get asked to approve
         a diff you have not been shown.
         """
         if self.json_mode or self.quiet:
@@ -380,11 +448,22 @@ class Out:
                        "error": {"code": code, "message": message}}
             sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
         else:
-            sys.stderr.write("error: " + message + "\n")
+            sys.stderr.write(self.paint("error:", "red", err=True) + " " + message + "\n")
+
+
+def num(n: int) -> str:
+    """Thousands-grouped integer -- one place decides how a count reads."""
+    return "{:,}".format(int(n))
+
+
+def count(n: int, singular: str, plural: Optional[str] = None) -> str:
+    """`1 file`, `3 files`: grouping and pluralisation, decided in one place."""
+    word = singular if n == 1 else (plural if plural is not None else singular + "s")
+    return "{} {}".format(num(n), word)
 
 
 def truncate_note(total: int, shown: int) -> str:
-    return f"({total - shown} more — use --top)" if total > shown else ""
+    return f"({num(total - shown)} more, use --top)" if total > shown else ""
 
 
 def short_id(*parts: str) -> str:

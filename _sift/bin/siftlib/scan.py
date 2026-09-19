@@ -296,6 +296,9 @@ def rollup_map(rows: List[dict], pathspec: str) -> Tuple[List[dict], List[dict]]
     here: List[dict] = []
     for r in rows:
         path = r["path"]
+        if path == spec:  # target is this file itself, not a directory to roll up
+            here.append(r)
+            continue
         rel = path[len(prefix):] if prefix and path.startswith(prefix) else path
         if "/" in rel:
             name = rel.split("/", 1)[0]
