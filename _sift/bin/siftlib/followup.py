@@ -83,6 +83,13 @@ def _hot_gap(ctx: Ctx, cfg: Config) -> "tuple[List[str], int]":
     descriptions accrue as files are worked on, and most files are never
     opened. What the pre-read hook can actually use is a description of the
     files this repo keeps changing, so that is what is asked for.
+
+    Tool-managed files are left out before ranking: agent-instruction files,
+    ignore/attribute config and sift's own generated output churn because a
+    tool rewrites them, not because anyone authors them, and a description of
+    one tells the pre-read hook nothing about the code. Counting them made
+    `setup-complete` nag to hand-describe `AGENTS.md` and `.codex/hooks.json`,
+    which is work no person should do.
     """
     from . import scan as scan_mod
 
@@ -94,10 +101,35 @@ def _hot_gap(ctx: Ctx, cfg: Config) -> "tuple[List[str], int]":
     if not files:
         return ([], 0)
     top_n = int(cfg.get("setup", "describe_top", default=25) or 25)
-    ranked = sorted((p for p in files if not files[p].get("binary")),
-                    key=lambda p: (-int(churn.get(p, 0) or 0), p))[:top_n]
+    ranked = sorted(
+        (p for p in files if not files[p].get("binary") and not _skip_describe(p)),
+        key=lambda p: (-int(churn.get(p, 0) or 0), p))[:top_n]
     described = scan_mod.load_descriptions(ctx)
     return ([p for p in ranked if p not in described], len(ranked))
+
+
+# Files that rank as "busiest" because a tool rewrites them or because they are
+# assets, not because a person authors prose or code to be understood: the
+# agent-instruction files, ignore/attribute config, sift's own `.codex/`
+# output, package lockfiles, and image/build assets that scan does not already
+# treat as binary (an SVG icon, a sourcemap). A one-line description of any of
+# them helps the pre-read hook nothing, so the hot-gap skips them before it
+# ranks, or they crowd out the code that a description would actually help.
+_AGENT_FILES = {"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
+_CONFIG_FILES = {".gitattributes", ".editorconfig"}
+_LOCKFILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
+              "uv.lock", "Cargo.lock", "go.sum", "Gemfile.lock", "composer.lock"}
+_ASSET_SUFFIXES = (".svg", ".map")
+
+
+def _skip_describe(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    if name in _AGENT_FILES or name in _CONFIG_FILES or name in _LOCKFILES:
+        return True
+    # `.gitignore`, `.dockerignore`, `.gastown-ignore`, `.npmignore`, ...
+    if name.startswith(".") and name.endswith("ignore"):
+        return True
+    return path.startswith(".codex/") or path.endswith(_ASSET_SUFFIXES)
 
 
 def lines(items: List[Dict[str, Any]], dir_name: str) -> List[str]:
