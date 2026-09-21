@@ -60,6 +60,10 @@ def build_parser() -> argparse.ArgumentParser:
                "  sift install [repo] [flags]\n"
                "  sift update  [repo] [flags]")
     p.add_argument("--sift-dir", dest="sift_dir", default=None)
+    p.add_argument("--repo", default=None,
+                   help="act on the sift repo at this path instead of the "
+                        "current directory (e.g. sift ledger --repo ~/x); has "
+                        "no effect with --all, which walks --root")
     p.add_argument("--json", dest="json_mode", action="store_true")
     p.add_argument("--quiet", action="store_true")
     p.add_argument("--color", choices=["auto", "always", "never"], default="auto",
@@ -205,8 +209,50 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--markdown", action="store_true")
 
     s = cmd("ledger", "what the index and governor saved this period",
-            "sift ledger", "sift ledger --all", "sift ledger --since 30.days")
-    s.add_argument("--since", default="7.days")
+            "sift ledger", "sift ledger --all", "sift ledger --since 30.days",
+            "sift ledger --repo ~/Projects/sftx-os")
+    # The output is terse by design; the glossary that makes it readable lives
+    # here, in `sift ledger --help`, not in every run. One line per metric, in
+    # the order they print.
+    s.description = (
+        "what the index and governor kept out of context this period\n"
+        "\n"
+        "One balance, all in one-off tokens so the three figures subtract:\n"
+        "  tokens avoided     tokens sift kept out of context.\n"
+        "  tokens introduced  tokens that reached context anyway.\n"
+        "  net tokens saved   avoided minus introduced.\n"
+        "A read that was refused or de-duplicated never enters, so it counts\n"
+        "whole to avoided; a condensed Bash flood is split -- the bytes cut go\n"
+        "to avoided, the smaller remainder that entered goes to introduced.\n"
+        "\n"
+        "avoided, by source:\n"
+        "  duplicate / ranged reads stopped  re-reads of a file already in\n"
+        "      context, and whole-file reads steered to a range. Count, and\n"
+        "      the measured tokens they would have added.\n"
+        "  big reads refused -> ranges  big whole-file reads refused up front\n"
+        "      so the model re-read a range instead. Count and their size.\n"
+        "  Bash outputs condensed  large command outputs replaced in place\n"
+        "      with a condensed form. Count and the tokens cut.\n"
+        "\n"
+        "introduced, by source:\n"
+        "  whole-file reads that came back  big reads that were not refused\n"
+        "      and landed in context. Count and their tokens.\n"
+        "  Bash floods, after condensing  Bash outputs over the threshold, at\n"
+        "      the size that actually entered (condensed where condensing was\n"
+        "      on). Count is every flood; tokens are what entered.\n"
+        "  context sift injected  context sift itself added (index hints,\n"
+        "      warnings).\n"
+        "\n"
+        "index: lookups the index answered (hits) or could not (misses), and\n"
+        "  commit / stop reminders the hooks raised (nudges).\n"
+        "\n"
+        "The one line in a different unit: because a token in context is\n"
+        "re-sent on every later turn, condensing's saving is also counted in\n"
+        "token-turns (tokens x the turns they would have ridden). Mostly cache\n"
+        "reads at roughly a tenth of the fresh price, so do not price as fresh.")
+    s.add_argument("--since", default="7.days",
+                   help="time window to summarise, e.g. 7.days or 30.days "
+                        "(default: 7.days)")
     fleet(s, "total the ledger")
 
     s = cmd("import", "import content from another tool into sift",
@@ -252,7 +298,11 @@ class App:
         self.out = util.Out(self.cmd, VERSION, args.json_mode, args.quiet,
                             color=getattr(args, "color", "auto"))
         try:
-            self.ctx = paths.resolve(Path.cwd(), args.sift_dir or getattr(args, "dir", None))
+            # --repo points the resolver at another repo (or a path inside one)
+            # so read commands like `ledger` run from anywhere; without it the
+            # base is the current directory, as before.
+            base = getattr(args, "repo", None) or Path.cwd()
+            self.ctx = paths.resolve(base, args.sift_dir or getattr(args, "dir", None))
         except paths.NotARepo:
             # The fleet commands act on repos found under your home directory,
             # not on the one you are standing in, so they run from anywhere -
@@ -918,6 +968,10 @@ class App:
 
     def cmd_ledger(self) -> int:
         if self.args.all:
+            if getattr(self.args, "repo", None):
+                self.out.fail("USAGE", "--repo names one repo; drop it, or use "
+                              "--root to point --all at another tree")
+                return EXIT_USAGE
             return self._ledger_all()
         if self.args.root:
             self.out.fail("USAGE", "--root only means something with --all")
@@ -939,21 +993,32 @@ class App:
                 util.count(summary["repos_found"], "repo"), summary["root"]))
             if summary["repos"]:
                 self.out.line("")
-                # One aligned table, not a hand-rolled column, so the per-repo
-                # figures line up under the same rules as every other table.
+                # The same three headline figures as the single-repo view, one
+                # row per repo, computed the one way in `_ledger_flow`, and a
+                # final total row -- the header above already gives the period
+                # and repo count, and the legend the meaning, so no separate
+                # total block repeats them. All one-off tokens.
+                self.out.line("tokens: avoided = kept out of context, "
+                              "introduced = reached context, net = the two "
+                              "subtracted.")
+                rows = []
+                for r in summary["repos"]:
+                    a, i, n, _ = self._ledger_flow(r)
+                    rows.append([r["repo"], util.num(r["index_hits"]),
+                                 util.num(a), util.num(i), util.num(n)])
+                ta, ti, tn, _ = self._ledger_flow(summary["total"])
+                rows.append(["total", util.num(summary["total"]["index_hits"]),
+                             util.num(ta), util.num(ti),
+                             self._net(util.num(tn), tn)])
                 self.out.table(
-                    [[r["repo"], util.num(r["index_hits"]),
-                      util.num(r["dup_warned"] + r["dup_denied"]),
-                      util.num(r["floods_seen"]), util.num(r["read_floods"])]
-                     for r in summary["repos"]],
-                    ["repo", "hits", "caught", "floods", "reads"])
-            if summary["repo_count"]:
+                    rows, ["repo", "hits", "avoided", "introduced", "net"])
+                # Where the total's avoided and introduced came from, across
+                # every repo. The three headline numbers are the total row
+                # above, so only the sources need repeating.
                 self.out.line("")
-                self.out.line("total across {}:".format(
-                    util.count(summary["repo_count"], "repo")))
-                # No repo's config decides a machine-wide total, so the advisory
-                # "turn it on" lines are left off here: they are per-repo.
-                self._print_ledger(summary["total"], advise=False)
+                self.out.line("breakdown:")
+                self._ledger_breakdown(summary["total"])
+                self._ledger_carry_and_index(summary["total"])
             if summary["idle"]:
                 # Named, not just counted: the header says how many are idle,
                 # this says which, so the gap is actionable without a script.
@@ -961,82 +1026,131 @@ class App:
                 self.out.line("{} with no ledger data in this window: {}".format(
                     util.count(len(summary["idle"]), "installed repo"),
                     ", ".join(summary["idle"])))
+            if summary["repo_count"]:
+                self._ledger_help_hint()
         self.out.emit(summary)
         return EXIT_OK
 
+    def _net(self, text: str, n: int) -> str:
+        """The net figure in green when it is a saving, red when it is negative,
+        plain at zero. `paint` returns the text untouched whenever colour is off
+        -- captured output, --json, NO_COLOR -- so this is safe to call always."""
+        if n > 0:
+            return self.out.paint(text, "green")
+        if n < 0:
+            return self.out.paint(text, "red")
+        return text
+
+    @staticmethod
+    def _ledger_flow(data: dict) -> tuple:
+        """The three headline figures, in one unit (one-off tokens), from one
+        place so the table and the detail agree.
+
+        avoided: tokens sift kept out of context -- reads not re-read or
+        steered to ranges, big reads refused, and the bytes condensing shrank
+        off a Bash flood. introduced: tokens that reached context -- whole-file
+        reads that came back, Bash floods at their post-condensing size, and
+        the context sift injected. net: avoided minus introduced. A refused or
+        de-duplicated read never enters, so it is credited whole to avoided and
+        nothing to introduced; a condensed flood is split -- the saving to
+        avoided, the entered remainder to introduced."""
+        saved_condensed = int(data.get("governed_saved_tokens", 0) or 0)
+        avoided = (int(data.get("tokens_avoided", 0) or 0)
+                   + int(data.get("denied_tokens", 0) or 0)
+                   + saved_condensed)
+        bash_entered = max(0, int(data.get("flood_seen_tokens", 0) or 0)
+                           - saved_condensed)
+        introduced = (int(data.get("read_flood_tokens", 0) or 0)
+                      + bash_entered
+                      + int(data.get("tokens_injected", 0) or 0))
+        return avoided, introduced, avoided - introduced, bash_entered
+
+    def _ledger_breakdown(self, data: dict) -> None:
+        """The two by-source tables that add up to `tokens avoided` and
+        `tokens introduced`. Shared so the single-repo view and the `--all`
+        total render the sources the one way."""
+        _, _, _, bash_entered = self._ledger_flow(data)
+        dup = data["dup_warned"] + data["dup_denied"]
+        ranged = int(data.get("ranged_steered", 0) or 0)
+        self.out.line("avoided, by source:")
+        self.out.line("  {:<33} {:>6}   {} tokens".format(
+            "duplicate / ranged reads stopped", util.num(dup + ranged),
+            util.num(data["tokens_avoided"])))
+        self.out.line("  {:<33} {:>6}   {} tokens".format(
+            "big reads refused -> ranges", util.num(data["big_reads_denied"]),
+            util.num(data["denied_tokens"])))
+        self.out.line("  {:<33} {:>6}   {} tokens".format(
+            "Bash outputs condensed", util.num(data["governed_calls"]),
+            util.num(data["governed_saved_tokens"])))
+        self.out.line("")
+        self.out.line("introduced, by source:")
+        self.out.line("  {:<33} {:>6}   {} tokens".format(
+            "whole-file reads that came back", util.num(data["read_floods"]),
+            util.num(data["read_flood_tokens"])))
+        self.out.line("  {:<33} {:>6}   {} tokens".format(
+            "Bash floods, after condensing", util.num(data["floods_seen"]),
+            util.num(bash_entered)))
+        self.out.line("  {:<33} {:>6}   {} tokens".format(
+            "context sift injected", "-", util.num(data["tokens_injected"])))
+
+    def _ledger_carry_and_index(self, data: dict) -> None:
+        """The carry line (the one figure in token-turns, kept apart so it is
+        never read against the tokens above) and the index line. Shared by the
+        single-repo view and the `--all` total."""
+        saved_tt = int(data.get("carry_saved", 0) or 0)
+        if saved_tt:
+            mult = saved_tt / max(1, int(data.get("governed_saved_tokens", 0) or 0))
+            self.out.line("")
+            self.out.line(
+                "condensing also keeps those tokens out of every later turn: "
+                "{} token-turns kept out (~{:.0f}x the one-off saving).".format(
+                    util.num(saved_tt), mult))
+        self.out.line("")
+        self.out.line("index: {} hits, {} misses, {} nudges".format(
+            util.num(data["index_hits"]), util.num(data["index_misses"]),
+            util.num(data["nudges"])))
+
+    def _ledger_help_hint(self) -> None:
+        self.out.line("")
+        self.out.line("what these mean: run {}".format(
+            self.out.action("sift ledger --help")))
+
     def _print_ledger(self, data: dict, advise: bool) -> None:
-        self.out.line("since {}: {} index hits, {} misses, {} duplicate reads caught, "
-                      "{} nudges".format(data["since"], data["index_hits"],
-                                         data["index_misses"],
-                                         data["dup_warned"] + data["dup_denied"],
-                                         data["nudges"]))
-        self.out.line("{:,} tokens avoided, {:,} tokens injected".format(
-            data["tokens_avoided"], data["tokens_injected"]))
-        if data["governed_calls"]:
-            # Measured, unlike the line above: both numbers are the real
-            # output, before and after. Re-runs sit next to the saving
-            # because a condensation the model works around is a loss.
-            self.out.line(
-                "governance: {} calls condensed {} -> {} tokens "
-                "({} saved, {:.0f}%), {} re-run".format(
-                    data["governed_calls"], data["governed_original_tokens"],
-                    data["governed_entered_tokens"], data["governed_saved_tokens"],
-                    100.0 * data["governed_saved_tokens"]
-                    / max(1, data["governed_original_tokens"]),
-                    data["governed_reruns"]))
-            for family, count in sorted(data["governed_families"].items()):
-                self.out.line("  {:<12} {}".format(family, count))
-        elif advise:
-            # Which branch to print is the setting's business, not the event
-            # count's. Telling someone to turn on a setting they have already
-            # turned on is how a report loses its reader. Only meaningful for one
-            # repo -- a machine-wide total has no single setting to advise on.
-            on = bool(self.cfg.get("governance", "enabled", default=False))
-            state = "on" if on else "off"
-            if data["floods_seen"] and on:
+        avoided, introduced, net, _ = self._ledger_flow(data)
+        self.out.line("since {}:".format(data["since"]))
+        self.out.line("")
+        # The headline balance, in one unit so the three actually subtract:
+        # kept out of context, reached context, and the difference.
+        self.out.line("  tokens avoided     {:>13}   kept out of context".format(
+            util.num(avoided)))
+        self.out.line("  tokens introduced  {:>13}   reached context".format(
+            util.num(introduced)))
+        self.out.line("  net tokens saved   {}".format(
+            self._net(util.num(net).rjust(13), net)))
+
+        self.out.line("")
+        self._ledger_breakdown(data)
+        self._ledger_carry_and_index(data)
+
+        # Advice is the live config's business, not the counts', and only for a
+        # single repo -- a machine-wide total has no one setting to advise on.
+        if advise and self.cfg is not None:
+            gov_on = bool(self.cfg.get("governance", "enabled", default=False))
+            mode = str(self.cfg.get("hooks", "big_read_mode", default="off"))
+            if not gov_on and data["floods_seen"]:
+                self.out.line("")
                 self.out.line(
-                    "governance: on, {} over the threshold and none condensed "
-                    "yet this period - the ones counted here ran before it "
-                    "was on.".format(util.count(data["floods_seen"], "command")))
-            elif data["floods_seen"]:
-                # The whole reason `advise` counts these: with condensation
-                # off there is otherwise no signal that it would have paid.
+                    "governance is off; {} Bash outputs went over the "
+                    "threshold this period. governance.enabled would condense "
+                    "them.".format(util.num(data["floods_seen"])))
+            if mode != "deny" and data["read_floods"]:
+                self.out.line("")
                 self.out.line(
-                    "governance: off, but {} went over the threshold. Turn it "
-                    "on with governance.enabled if you want those "
-                    "condensed.".format(util.count(data["floods_seen"], "command")))
-            else:
-                self.out.line(
-                    "governance: {}, and nothing went over the threshold "
-                    "this period - nothing for it to do.".format(state))
-        elif data["floods_seen"]:
-            self.out.line("governance: {} over the threshold, none "
-                          "condensed.".format(util.count(data["floods_seen"], "command")))
-        if data.get("read_floods"):
-            # The Read tool's floods, beside Bash's. On the first repo
-            # measured they outnumbered the Bash floods five to one. The
-            # big_read_mode advice is per-repo, so a total only states the count.
-            suffix = ""
-            if advise:
-                mode = str(self.cfg.get("hooks", "big_read_mode", default="off"))
-                suffix = " (big_read_mode: {}{})".format(
-                    mode, "" if mode == "deny"
-                    else " - set it to deny to turn these into ranged reads")
-            self.out.line(
-                "reads: {} over the threshold ({} tokens), "
-                "{} refused once and given ranges{}".format(
-                    util.count(data["read_floods"], "whole-file read"),
-                    util.num(data["read_flood_tokens"]),
-                    util.num(data["big_reads_denied"]), suffix))
-        cost, saved = data.get("carry_cost") or 0, data.get("carry_saved") or 0
-        if cost or saved:
-            # The figures above are what a payload weighed once. These are
-            # what it weighed for every turn that followed, which is the
-            # number that decides whether any of this is worth doing.
-            self.out.line(
-                "context carry: {:,} tokens carried, {:,} kept out by "
-                "condensing ({}; mostly cache reads, so do not price them "
-                "as fresh)".format(cost, saved, data["carry_basis"]))
+                    "big_read_mode is off; {} whole-file reads came back over "
+                    "the threshold. Set it to deny to turn those into ranged "
+                    "reads.".format(util.num(data["read_floods"])))
+
+        self._ledger_help_hint()
 
     def cmd_import(self) -> int:
         # OpenWolf is the only source there is, so `sift import` means it; the
@@ -1227,7 +1341,7 @@ def _needs_repo(args: argparse.Namespace) -> bool:
 
 
 GLOBAL_SWITCHES = ("--json", "--quiet")
-GLOBAL_OPTIONS = ("--sift-dir", "--color")
+GLOBAL_OPTIONS = ("--sift-dir", "--color", "--repo")
 
 
 def hoist_globals(argv: Sequence[str]) -> List[str]:

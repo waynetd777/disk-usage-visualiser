@@ -323,6 +323,13 @@ _ANSI = {"red": "1;31", "green": "32", "action": "1;36"}
 # column of these is right-aligned like a spreadsheet; "L1-20" or "3 files" is
 # text and stays left, which is how the reader tells figures from labels.
 _NUMERIC_CELL = re.compile(r"^-?\d[\d,]*(\.\d+)?$")
+# A cell may carry colour codes (e.g. a green/red net figure). Width and the
+# numeric test go by the visible text, so a coloured cell still lines up.
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def _visible(value: Any) -> str:
+    return _ANSI_RE.sub("", str(value))
 
 
 def _color_on(stream: Any, mode: str, json_mode: bool) -> bool:
@@ -389,12 +396,15 @@ class Out:
         body = ([headers] if headers else []) + rows
         for row in body:
             for i in range(cols):
-                widths[i] = max(widths[i], len(str(row[i])))
+                widths[i] = max(widths[i], len(_visible(row[i])))
         numeric = [self._numeric_col(rows, i) for i in range(cols)]
 
         def justify(value: Any, i: int) -> str:
+            # Pad by the visible width so a cell carrying colour codes lines up
+            # with the plain cells above and below it.
             s = str(value)
-            return s.rjust(widths[i]) if numeric[i] else s.ljust(widths[i])
+            pad = max(0, widths[i] - len(_visible(s)))
+            return (" " * pad + s) if numeric[i] else (s + " " * pad)
 
         if headers:
             self.line("  ".join(justify(headers[i], i) for i in range(cols)).rstrip())
@@ -406,7 +416,7 @@ class Out:
     def _numeric_col(rows: List[List[str]], i: int) -> bool:
         seen = False
         for row in rows:
-            s = str(row[i]).strip()
+            s = _visible(row[i]).strip()
             if not s:
                 continue
             seen = True

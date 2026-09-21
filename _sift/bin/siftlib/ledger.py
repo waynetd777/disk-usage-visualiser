@@ -77,6 +77,12 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
     gov_entered = 0
     gov_families: Dict[str, int] = {}
     read_flood_tokens = 0
+    # The size of the reads that were refused up front, and of the Bash outputs
+    # that went over the threshold. Summed so the "tokens avoided" account can
+    # credit a refusal, and the "reaching context" account can show what the
+    # uncondensed floods weighed -- both were counts only before.
+    denied_tokens = 0
+    flood_seen_tokens = 0
     for row in util.read_jsonl(ctx.ledger):
         ts = str(row.get("ts", ""))
         if cutoff and ts < cutoff:
@@ -91,6 +97,10 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
             injected += tokens
         if event == "read_flood":
             read_flood_tokens += tokens
+        if event == "big_read_denied":
+            denied_tokens += tokens
+        if event == "flood_seen":
+            flood_seen_tokens += tokens
         at = row.get("at_call")
         sess = str(row.get("session", ""))
         if at is not None:
@@ -139,6 +149,11 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
         "read_floods": counts["read_flood"],
         "read_flood_tokens": read_flood_tokens,
         "big_reads_denied": counts["big_read_denied"],
+        # Sizes to go with the two counts above: what the refused reads would
+        # have weighed (an avoided cost), and what every Bash flood weighed
+        # (the condensed share of it is `governed_original_tokens`).
+        "denied_tokens": denied_tokens,
+        "flood_seen_tokens": flood_seen_tokens,
         # Size times the turns that followed, which is what a token in the
         # context actually costs. Kept as two numbers because netting them
         # hides the whole point: `carry_cost` is what entered and stayed,
@@ -160,6 +175,7 @@ _SUMMABLE = (
     "nudges", "tokens_avoided", "tokens_injected", "governed_calls",
     "governed_original_tokens", "governed_entered_tokens", "governed_reruns",
     "floods_seen", "read_floods", "read_flood_tokens", "big_reads_denied",
+    "denied_tokens", "flood_seen_tokens",
     "carry_cost", "carry_saved")
 
 
