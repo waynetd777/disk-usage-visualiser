@@ -15,6 +15,10 @@ from .paths import Ctx
 EVENTS = ("index_hit", "index_miss", "dup_warned", "dup_denied",
           "ranged_steered", "nudge_commit", "nudge_stop", "injected",
           "governed", "governed_rerun", "flood_seen",
+          # A Bash flood of a family the governor never condenses -- test,
+          # build, or an unclassifiable chain. It entered context whole; it is
+          # counted so the passed-through volume can be told apart by family.
+          "flood_passed",
           # The Read channel's floods, counted the way `flood_seen` counts
           # Bash's: a whole-file read that came back over the threshold, and a
           # whole-file read `pre_read` refused once and handed ranges for.
@@ -83,6 +87,8 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
     # uncondensed floods weighed -- both were counts only before.
     denied_tokens = 0
     flood_seen_tokens = 0
+    flood_passed_tokens = 0
+    passed_families: Dict[str, int] = {}
     for row in util.read_jsonl(ctx.ledger):
         ts = str(row.get("ts", ""))
         if cutoff and ts < cutoff:
@@ -101,11 +107,15 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
             denied_tokens += tokens
         if event == "flood_seen":
             flood_seen_tokens += tokens
+        if event == "flood_passed":
+            flood_passed_tokens += tokens
+            family = str(row.get("family", "?"))
+            passed_families[family] = passed_families.get(family, 0) + 1
         at = row.get("at_call")
         sess = str(row.get("session", ""))
         if at is not None:
             spans[sess] = max(spans.get(sess, 0), int(at))
-            if event in ("flood_seen", "read_flood", "injected"):
+            if event in ("flood_seen", "flood_passed", "read_flood", "injected"):
                 # Cost: these tokens entered the conversation and stayed.
                 carried.append((sess, int(at), tokens, "cost"))
             elif event == "governed":
@@ -142,6 +152,13 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
         # `enabled` off this is the whole point: zero here after a week of real
         # work is the evidence that condensation would buy nothing.
         "floods_seen": counts["flood_seen"],
+        # Floods of the families the governor never condenses (test, build,
+        # unclassifiable). They entered context whole; the tokens and the
+        # per-family count are here so the passed-through share of the balance
+        # is visible and can be told apart from what condensing could have cut.
+        "floods_passed": counts["flood_passed"],
+        "flood_passed_tokens": flood_passed_tokens,
+        "passed_families": passed_families,
         # The same count for the Read tool, which is where the first real
         # sessions put most of the tokens: whole-file reads that came back over
         # the threshold, what they weighed, and how many `big_read_mode: deny`
@@ -174,7 +191,8 @@ _SUMMABLE = (
     "index_hits", "index_misses", "dup_warned", "dup_denied", "ranged_steered",
     "nudges", "tokens_avoided", "tokens_injected", "governed_calls",
     "governed_original_tokens", "governed_entered_tokens", "governed_reruns",
-    "floods_seen", "read_floods", "read_flood_tokens", "big_reads_denied",
+    "floods_seen", "floods_passed", "flood_passed_tokens",
+    "read_floods", "read_flood_tokens", "big_reads_denied",
     "denied_tokens", "flood_seen_tokens",
     "carry_cost", "carry_saved")
 
@@ -232,10 +250,14 @@ def _aggregate(repos: List[Dict[str, Any]], since: str) -> Dict[str, Any]:
     for key in _SUMMABLE:
         total[key] = sum(int(r.get(key, 0) or 0) for r in repos)
     families: Dict[str, int] = {}
+    passed: Dict[str, int] = {}
     for r in repos:
         for family, count in (r.get("governed_families") or {}).items():
             families[family] = families.get(family, 0) + int(count or 0)
+        for family, count in (r.get("passed_families") or {}).items():
+            passed[family] = passed.get(family, 0) + int(count or 0)
     total["governed_families"] = families
+    total["passed_families"] = passed
     total["governed_saved_tokens"] = max(
         0, total["governed_original_tokens"] - total["governed_entered_tokens"])
     total["carry_basis"] = "turns after each event, per session"

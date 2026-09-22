@@ -65,7 +65,21 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     desc = (scan_mod.load_descriptions(h.ctx).get(rel) or {}).get("desc", "")
     tokens = int(rec.get("tokens", 0) or 0)
 
-    ledger.record(h.ctx, h.session_id, "index_hit" if (rec or desc) else "index_miss", tokens)
+    if rec or desc:
+        ledger.record(h.ctx, h.session_id, "index_hit", tokens)
+    else:
+        # A miss carries why, so a spike can be told apart from the transcript:
+        # `absent` is a path the model guessed at that is not on disk, `stale`
+        # is a real file the scan has not indexed (a new or never-scanned file,
+        # the only kind that points at the index rather than the read). The
+        # path rides along too; it is inside the repo (line 46 returned already
+        # for anything outside), so it is repo-relative and safe to keep.
+        try:
+            exists = (h.ctx.root / rel).exists()
+        except OSError:
+            exists = False
+        ledger.record(h.ctx, h.session_id, "index_miss", tokens,
+                      path=rel, reason="stale" if exists else "absent")
 
     mode = str(h.cfg.get("hooks", "duplicate_read_mode", default="warn"))
     syms = rec.get("symbols") or []

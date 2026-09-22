@@ -188,10 +188,22 @@ def _govern(h: "_common.HookCtx", command: str):
     # replaceable family nor over the threshold, and preserving their output
     # would litter the cache with logs nothing will ever point at.
     family = govern.classify(command)
-    if family not in govern.REPLACE_FAMILIES:
-        return None, None
     threshold = int(gcfg.get("threshold_tokens")
                     or govern.DEFAULTS["threshold_tokens"])
+    if family not in govern.REPLACE_FAMILIES:
+        # A family we never condense -- test, build, or a chain we cannot read
+        # -- still floods context when it goes over the threshold, and those
+        # tokens entered uncounted before, so the ledger's balance was short by
+        # exactly the volume we most wanted to weigh. Record the flood with its
+        # family (record-only: nothing is rewritten, no log is written) so the
+        # passed-through share is measurable. `estimate_tokens` is arithmetic on
+        # the length, so this stays a cheap check before any file write.
+        if advise:
+            original = govern.estimate_tokens(stdout)
+            if original >= threshold:
+                ledger.record(h.ctx, h.session_id, "flood_passed", original,
+                              at_call=h.tool_call_index(), family=family)
+        return None, None
     original = govern.estimate_tokens(stdout)
     if original < threshold:
         return None, None

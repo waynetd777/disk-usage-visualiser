@@ -235,16 +235,22 @@ def build_parser() -> argparse.ArgumentParser:
         "      with a condensed form. Count and the tokens cut.\n"
         "\n"
         "introduced, by source:\n"
-        "  whole-file reads that came back  big reads that were not refused\n"
-        "      and landed in context. Count and their tokens.\n"
+        "  whole files read anyway  big reads taken whole after ranges were\n"
+        "      offered, so they landed in context. Count and their tokens.\n"
         "  Bash floods, after condensing  Bash outputs over the threshold, at\n"
         "      the size that actually entered (condensed where condensing was\n"
         "      on). Count is every flood; tokens are what entered.\n"
+        "  Bash floods passed through  floods of a family the governor never\n"
+        "      condenses (test, build, an unclassifiable chain). They entered\n"
+        "      whole; the family tally says which. Only shown when there are\n"
+        "      any.\n"
         "  context sift injected  context sift itself added (index hints,\n"
         "      warnings).\n"
         "\n"
         "index: lookups the index answered (hits) or could not (misses), and\n"
-        "  commit / stop reminders the hooks raised (nudges).\n"
+        "  commit / stop reminders the hooks raised (nudges). A miss records\n"
+        "  its path and reason (stale = a real file not indexed, absent = a\n"
+        "  path not on disk) in the ledger for evaluation, not in this summary.\n"
         "\n"
         "The one line in a different unit: because a token in context is\n"
         "re-sent on every later turn, condensing's saving is also counted in\n"
@@ -1049,7 +1055,8 @@ class App:
         avoided: tokens sift kept out of context -- reads not re-read or
         steered to ranges, big reads refused, and the bytes condensing shrank
         off a Bash flood. introduced: tokens that reached context -- whole-file
-        reads that came back, Bash floods at their post-condensing size, and
+        reads that came back, Bash floods at their post-condensing size, the
+        floods of families the governor never condenses that entered whole, and
         the context sift injected. net: avoided minus introduced. A refused or
         de-duplicated read never enters, so it is credited whole to avoided and
         nothing to introduced; a condensed flood is split -- the saving to
@@ -1062,6 +1069,7 @@ class App:
                            - saved_condensed)
         introduced = (int(data.get("read_flood_tokens", 0) or 0)
                       + bash_entered
+                      + int(data.get("flood_passed_tokens", 0) or 0)
                       + int(data.get("tokens_injected", 0) or 0))
         return avoided, introduced, avoided - introduced, bash_entered
 
@@ -1085,11 +1093,20 @@ class App:
         self.out.line("")
         self.out.line("introduced, by source:")
         self.out.line("  {:<33} {:>6}   {} tokens".format(
-            "whole-file reads that came back", util.num(data["read_floods"]),
+            "whole files read anyway", util.num(data["read_floods"]),
             util.num(data["read_flood_tokens"])))
         self.out.line("  {:<33} {:>6}   {} tokens".format(
             "Bash floods, after condensing", util.num(data["floods_seen"]),
             util.num(bash_entered)))
+        passed = int(data.get("floods_passed", 0) or 0)
+        if passed:
+            fam = data.get("passed_families") or {}
+            tail = " ({})".format(", ".join(
+                "{} {}".format(v, k) for k, v in sorted(
+                    fam.items(), key=lambda kv: -kv[1]))) if fam else ""
+            self.out.line("  {:<33} {:>6}   {} tokens{}".format(
+                "Bash floods passed through", util.num(passed),
+                util.num(int(data.get("flood_passed_tokens", 0) or 0)), tail))
         self.out.line("  {:<33} {:>6}   {} tokens".format(
             "context sift injected", "-", util.num(data["tokens_injected"])))
 
