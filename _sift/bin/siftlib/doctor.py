@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -293,18 +295,47 @@ def _openwolf_fix(root: Path, found: List[Dict[str, str]]) -> str:
         for d in dirs)
 
 
+_UPSTREAM_REPO = "SFT-Experiments/sift"
+_UPSTREAM_PATH = "src/VERSION"
+
+
 def _upstream_check(ctx: Ctx) -> dict:
     """The one network call in the tool, and only behind an explicit flag."""
-    url = "https://raw.githubusercontent.com/SFT-Experiments/sift/main/src/VERSION"
     local = util.read_text(ctx.dir / "bin" / "VERSION").strip() or "unknown"
-    try:
-        import urllib.request
-        with urllib.request.urlopen(url, timeout=5) as resp:  # nosec - opt-in
-            remote = resp.read().decode("utf-8").strip()
-    except Exception as exc:  # noqa: BLE001 - any network failure is just "unknown"
+    remote, why = _fetch_upstream_version()
+    if remote is None:
         return {"id": "upstream", "ok": True,
-                "detail": "local {}; upstream unknown ({})".format(local, exc.__class__.__name__),
+                "detail": "local {}; upstream unknown ({})".format(local, why),
                 "fix": ""}
     return {"id": "upstream", "ok": local == remote,
             "detail": "local {} / upstream {}".format(local, remote),
             "fix": "re-run install.py from a fresh clone"}
+
+
+def _fetch_upstream_version() -> tuple:
+    """`(version, "")` on success, `(None, reason)` on failure.
+
+    The canonical repo is private, so `raw.githubusercontent.com` answers an
+    unauthenticated request with 404. `gh api` reuses the user's own GitHub
+    login -- no token for sift to hold -- so it is tried first when `gh` is on
+    PATH; the raw URL stays as the fallback for a machine without `gh` or a
+    public mirror. Either way a failure is just "unknown", never a red check.
+    """
+    gh = shutil.which("gh")
+    if gh:
+        try:
+            out = subprocess.run(  # nosec - opt-in, user's own gh auth
+                [gh, "api", "repos/{}/contents/{}".format(_UPSTREAM_REPO, _UPSTREAM_PATH),
+                 "-H", "Accept: application/vnd.github.raw"],
+                capture_output=True, text=True, timeout=8)
+            if out.returncode == 0 and out.stdout.strip():
+                return out.stdout.strip(), ""
+        except (OSError, subprocess.SubprocessError):
+            pass
+    url = "https://raw.githubusercontent.com/{}/main/{}".format(_UPSTREAM_REPO, _UPSTREAM_PATH)
+    try:
+        import urllib.request
+        with urllib.request.urlopen(url, timeout=5) as resp:  # nosec - opt-in
+            return resp.read().decode("utf-8").strip(), ""
+    except Exception as exc:  # noqa: BLE001 - any network failure is just "unknown"
+        return None, exc.__class__.__name__
