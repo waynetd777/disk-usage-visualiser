@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 import os
+import re
 import sys
 
 # `python3 -I` drops the script's own directory from sys.path, so the sibling
@@ -30,7 +31,7 @@ import _common
 
 
 def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
-    from siftlib import govern, ledger, session as session_mod, util
+    from siftlib import ledger, session as session_mod, util
 
     path = str(h.tool_input().get("file_path") or h.tool_input().get("path") or "")
     if not path:
@@ -49,36 +50,75 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     if not h.ctx.contains(rel) or h.ctx.is_sift_path(rel):
         return None
 
-    tokens = govern.estimate_tokens(text)
-    ranged = bool(h.tool_input().get("offset") or h.tool_input().get("limit"))
+    # Measured in the scan's unit, so that it can be set against the scan's
+    # size of the whole file: the line-number prefix the Read tool adds is
+    # stripped, and the file's own per-extension divisor is used. Measured
+    # raw at chars/3.5, the same 3,023-token file came back as 4,623, so the
+    # floods were counted half again too large and a window could outweigh
+    # the file it was cut from.
+    tokens = util.estimate_tokens(strip_line_numbers(text), os.path.splitext(rel)[1])
+    scan = util.read_json(h.ctx.scan_json, default={}) or {}
+    whole = int(((scan.get("files") or {}).get(rel) or {}).get("tokens", 0) or 0)
+    # Whole by what was asked for -- judged the one way `pre_read` judges it,
+    # so `offset: 0` is a whole read in both hooks -- or by what came back:
+    # a "range" that returned the file is the file.
+    whole_read = (_common.is_whole_read(h.tool_input(), _line_count(h, path, rel))
+                  or (whole > 0 and tokens >= whole))
+    at_call = h.tool_call_index()
+    credit = {"delta": 0, "record": False}
 
     def change(state: Dict[str, Any]) -> None:
         entry = (state.get("files_read") or {}).get(rel) or {"count": 1}
-        # The measured size replaces the estimate, except for a window: the
-        # tokens of a ranged read are not the tokens of the file, and writing
-        # them here would let the next full read be refused as a duplicate of
-        # something the model never saw whole.
-        if not ranged:
+        # Compaction evicted whatever windows of this file were in context, so
+        # the coverage they built starts again from nothing.
+        covered = 0 if entry.get("compacted") else int(entry.get("window_tokens", 0) or 0)
+        # What the ranged reads so far have been credited with, in total: the
+        # file less the windows, and nothing at all until there is a window.
+        # Each read records the change in that figure, so the ledger's sum for
+        # the file is `whole - sum(windows)` however many windows it took --
+        # not `whole - window` per window, which credited a file read in two
+        # halves with the whole of itself while every line of it entered.
+        before = max(0, whole - covered) if covered else 0
+        whole_in_context = bool(entry.get("measured")) and not entry.get("ranged", True) \
+            and not entry.get("compacted")
+        if whole_read:
+            # The measured size replaces the estimate. A whole read after the
+            # windows were credited supersedes them: the file is in context
+            # entire, so what they were credited with is taken back.
             entry["tokens"] = tokens
             entry["ranged"] = False
             entry["measured"] = True
+            entry["compacted"] = False
+            entry["window_tokens"] = 0
+            if before:
+                credit["delta"] = -before
+                credit["record"] = True
         else:
             entry["ranged"] = bool(entry.get("ranged", True))
+            entry["compacted"] = False
+            if not whole_in_context:
+                entry["window_tokens"] = covered + tokens
+                after = max(0, whole - covered - tokens)
+                credit["delta"] = after - before
+            # A window of a file already in context whole saves nothing; it
+            # is recorded so the count is honest, with a zero credit.
+            credit["record"] = True
         state.setdefault("files_read", {})[rel] = entry
 
     session_mod.mutate(h.ctx, h.session_id, change)
 
     # What a ranged read saved, measured rather than assumed: the whole file
-    # as the scan sized it, minus what the window actually returned. This used
+    # as the scan sized it, minus what the windows actually returned. This used
     # to be a hardcoded 400 recorded by `pre_read`, which could not know
     # either number. A file the scan has never seen contributes nothing --
-    # zero is honest where a constant was not.
-    if ranged:
-        scan = util.read_json(h.ctx.scan_json, default={}) or {}
-        whole = int(((scan.get("files") or {}).get(rel) or {}).get("tokens", 0) or 0)
-        ledger.record(h.ctx, h.session_id, "ranged_steered",
-                      max(0, whole - tokens), at_call=h.tool_call_index(),
-                      whole_tokens=whole, read_tokens=tokens)
+    # zero is honest where a constant was not. The row carries the path so the
+    # summary can fold a file's windows together, and `tokens` is the change
+    # in the file's credit, which can be negative (see `change`).
+    if credit["record"]:
+        ledger.record(h.ctx, h.session_id, "ranged_steered", credit["delta"],
+                      at_call=at_call, path=rel, whole_tokens=whole,
+                      read_tokens=tokens, whole_read=whole_read)
+    if not whole_read:
         return None
 
     # A whole-file read over the threshold is a flood by the same definition
@@ -90,7 +130,7 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
         return None
     deny_on = str(h.cfg.get("hooks", "big_read_mode", default="off")) == "deny"
     ledger.record(h.ctx, h.session_id, "read_flood", tokens,
-                  at_call=h.tool_call_index(), path=rel, denied_first=deny_on)
+                  at_call=at_call, path=rel, denied_first=deny_on)
     if deny_on or h.subagent:
         return None
     return _flood_note(h, session_mod, tokens)
@@ -145,6 +185,28 @@ def _abs(h: "_common.HookCtx", path: str) -> "Any":
     from pathlib import Path
     p = Path(path)
     return p if p.is_absolute() else (h.ctx.root / p)
+
+
+_LINE_NUMBER_RE = re.compile(r"^\s*\d+\t", re.M)
+
+
+def strip_line_numbers(text: str) -> str:
+    """The Read tool returns `cat -n` style lines, `     1\\tcontent`. The
+    prefix is the tool's, not the file's, and the scan never saw it."""
+    return _LINE_NUMBER_RE.sub("", text)
+
+
+def _line_count(h: "_common.HookCtx", raw_path: str, rel: str) -> Optional[int]:
+    """The file's line count, for `is_whole_read`'s limit check; counted only
+    when a limit was given, so the ordinary read costs no extra disk access."""
+    if h.tool_input().get("limit") is None:
+        return None
+    try:
+        with open(str(_abs(h, raw_path)), "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
 
 
 def extract(response: Any) -> Optional[str]:

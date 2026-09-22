@@ -66,6 +66,46 @@ def deny(event: str, reason: str) -> Dict[str, Any]:
     }}
 
 
+def read_window(tool_input: Dict[str, Any]) -> "tuple[int, Optional[int]]":
+    """`(offset, limit)` as the Read tool reads them: offset 1-based, with a
+    missing, zero or negative offset meaning the first line; limit None when
+    absent or unusable."""
+    def _int(value: Any) -> Optional[int]:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    offset = _int(tool_input.get("offset"))
+    limit = _int(tool_input.get("limit"))
+    if offset is None or offset < 1:
+        offset = 1
+    if limit is not None and limit < 0:
+        limit = None
+    return offset, limit
+
+
+def is_whole_read(tool_input: Dict[str, Any], total_lines: Optional[int]) -> bool:
+    """Whether this Read returns the whole file, judged the one way by both
+    Read hooks.
+
+    `offset`/`limit` present used to mean ranged in `pre_read` and `offset or
+    limit` truthy meant ranged in `post_read`, so `offset: 0` slipped past the
+    big-read refusal in one hook and was recorded as a whole read by the other,
+    and `offset: 1, limit: 100000` was a "range" that returned the file. From
+    the first line with no limit is the whole file; so is a limit that reaches
+    its last line, when the line count is known. `total_lines` None means the
+    caller could not count, and a limit is then taken at its word.
+    """
+    offset, limit = read_window(tool_input)
+    if offset > 1:
+        return False
+    if limit is None:
+        return True
+    if total_lines is None:
+        return False
+    return limit >= total_lines
+
+
 def is_subagent(payload: Dict[str, Any]) -> bool:
     return bool(str(payload.get("agent_id") or "").strip()
                 or str(payload.get("agent_type") or "").strip())

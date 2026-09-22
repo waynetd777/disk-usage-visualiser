@@ -49,8 +49,11 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     # A ranged read is already the behaviour we are trying to encourage.
     # `post_read` records it, not this hook: the saving is the whole file
     # minus what the range actually returned, and only one of those two
-    # numbers is known before the read happens.
-    if tool_input.get("offset") is not None or tool_input.get("limit") is not None:
+    # numbers is known before the read happens. Ranged means it returns less
+    # than the file, judged by `is_whole_read` for both hooks: `offset: 0` and
+    # a limit past the last line used to count as ranges here, which let a
+    # whole-file read walk round the refusal below on its first attempt.
+    if not _common.is_whole_read(tool_input, _line_count(h, raw_path, rel, tool_input)):
         return None
 
     scan = util.read_json(h.ctx.scan_json, default={}) or {}
@@ -147,26 +150,61 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     session_mod.mutate(h.ctx, h.session_id, change)
 
     if out["event"]:
+        # A refusal's size is recorded for the count and the JSON; the ledger
+        # does not credit it to `tokens avoided`. What the refusal saves is
+        # realised by the ranged reads that follow it, and `post_read` credits
+        # those, so crediting the refusal as well booked the same file twice.
         ledger.record(h.ctx, h.session_id, out["event"],
-                      size_tokens if out["big"] else tokens)
+                      size_tokens if out["big"] else tokens, path=rel,
+                      at_call=h.tool_call_index())
     if out["big"]:
         if syms:
             how = "Symbols: {}. Read the part you need with offset/limit".format(
                 sym_mod.format_hint(syms, 8))
         else:
             how = "Read it with offset/limit in windows of about 200 lines"
-        return _common.deny(EVENT, _common.PREFIX + (
+        return _denied(h, ledger, _common.PREFIX + (
             "{} is ~{} tok and this would read all of it into the conversation "
             "for the rest of the session. {}; if you need all of it, take it in "
             "a few windows.".format(rel, size_tokens, how)))
     if out["deny"]:
-        return _common.deny(EVENT, _common.PREFIX + (
+        return _denied(h, ledger, _common.PREFIX + (
             "{} is already in this conversation, unchanged (~{} tok). Scroll back rather "
             "than re-reading; if you need a specific part, read it with offset/limit."
             .format(rel, tokens)))
     if out["text"]:
         return _common.additional_context(EVENT, out["text"])
     return None
+
+
+def _denied(h: "_common.HookCtx", ledger, reason: str) -> Dict[str, Any]:
+    """A refusal, with its reason counted as context sift added.
+
+    The reason reaches the model as the tool's result, so it is context this
+    tool injected like any hint, and it went unrecorded. Recorded, not
+    `charge`d: a refusal must never be silenced by the hint budget, and the
+    budget must not be spent by it either.
+    """
+    from siftlib import util
+    ledger.record(h.ctx, h.session_id, "injected", util.estimate_tokens(reason),
+                  at_call=h.tool_call_index())
+    return _common.deny(EVENT, reason)
+
+
+def _line_count(h: "_common.HookCtx", raw_path: str, rel: str,
+                tool_input: Dict[str, Any]) -> Optional[int]:
+    """How many lines the file has, counted only when a `limit` was given --
+    that is the one case `is_whole_read` needs it for -- so the ordinary read
+    costs no extra disk access. None when it cannot be counted."""
+    if tool_input.get("limit") is None:
+        return None
+    path = raw_path if os.path.isabs(raw_path) else str(h.ctx.root / rel)
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
 
 
 def _size_tokens(h: "_common.HookCtx", raw_path: str, rel: str) -> int:

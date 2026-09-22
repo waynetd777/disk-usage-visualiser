@@ -19,10 +19,13 @@ def run(root: Optional[Path], args: Sequence[str], timeout: int = 30) -> subproc
     env = dict(os.environ)
     env.setdefault("GIT_OPTIONAL_LOCKS", "0")
     try:
+        # `errors="replace"`: `git show :path` on a staged binary otherwise
+        # raises inside `run` and takes staged lint down with it, which at
+        # the pre-commit hook is a hard-fail check failing open.
         return subprocess.run(
             [GIT] + list(args),
-            capture_output=True, text=True, check=False, timeout=timeout,
-            cwd=str(root) if root else None, env=env,
+            capture_output=True, text=True, errors="replace", check=False,
+            timeout=timeout, cwd=str(root) if root else None, env=env,
         )
     except (OSError, subprocess.TimeoutExpired):
         return subprocess.CompletedProcess([GIT] + list(args), 128, "", "git unavailable")

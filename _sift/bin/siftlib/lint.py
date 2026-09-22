@@ -64,6 +64,13 @@ ABSOLUTE_PATTERNS = [
     re.compile(r"(^|[^A-Za-z0-9_./~-])~/"),
     re.compile(r"C:\\\\Users\\\\"),
     re.compile(r"C:\\Users\\"),
+    # The class above excludes `/` so that a repo-relative `docs/Users/` is not
+    # a leak, and that let two real forms of a machine path through: a
+    # `file:///Users/...` link, where the character before is the URL's own
+    # slash, and a WSL mount, `/mnt/c/Users/...`, where it is the drive
+    # letter. Both are named here on their own.
+    re.compile(r"(?i)file:/+(?:[A-Za-z0-9.-]+/)?(Users|home|Volumes|private|tmp|var)/"),
+    re.compile(r"(?i)/mnt/[a-z]/Users/"),
 ]
 # Paths that are the same on every machine, so they are not a leak. Scrubbed
 # from the line before W16 looks at it rather than excusing the line: skipping
@@ -208,8 +215,10 @@ def run(ctx: Ctx, cfg: Config, fast: bool = False,
         # or removed after staging. The index is the content the hook guards.
         candidates = [ctx.root / p for p in sorted(staged_set)]
     for path in candidates:
-        if path.suffix.lower() not in (".md", ".jsonl"):
-            continue
+        # Every committed file under the sift directory, not only `.md` and
+        # `.jsonl`: a secret in `config.json` or a machine path in
+        # `.siftignore` is committed all the same, and both went unscanned.
+        # Binaries are told by content, below, not by extension.
         rel_sift = path.relative_to(ctx.dir).as_posix()
         if rel_sift.startswith(("local/", ".cache/", "bin/")):
             continue
@@ -220,7 +229,7 @@ def run(ctx: Ctx, cfg: Config, fast: bool = False,
                 if staged_set is not None else util.read_text(path))
         if text is None:  # staged deletion: no content will enter the commit
             continue
-        if not text:
+        if not text or "\x00" in text:
             continue
         lines = text.splitlines()
         # `conventions.md` and the README state the privacy rule, which means

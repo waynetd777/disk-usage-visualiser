@@ -22,7 +22,16 @@ EVENTS = ("index_hit", "index_miss", "dup_warned", "dup_denied",
           # The Read channel's floods, counted the way `flood_seen` counts
           # Bash's: a whole-file read that came back over the threshold, and a
           # whole-file read `pre_read` refused once and handed ranges for.
-          "read_flood", "big_read_denied")
+          "read_flood", "big_read_denied",
+          # The knowledge artefacts save no tokens; their case rests on being
+          # consulted and on the privacy rule holding. Neither was counted
+          # until 2026-09-22 (D-20260922-03). `consulted` is one `sift search`,
+          # `bug find` or `decisions` call with how many rows it returned;
+          # `lint_blocked` is a `lint --staged` run that found a hard-fail
+          # code, which is the commit the pre-commit hook refuses.
+          "consulted", "lint_blocked")
+
+CONSULT_COMMANDS = ("search", "bug_find", "decisions")
 
 # There used to be a DEFAULT_AVOIDED_TOKENS = 400 here, added to every event
 # whose size was unknown. It made `tokens_avoided_est` a count wearing a
@@ -53,11 +62,22 @@ def record(ctx: Ctx, session: str, event: str, tokens: int = 0,
         pass
 
 
+SINCE_RE = r"^(\d+)\.(day|days|week|weeks|month|months|year|years)$"
+
+
+def valid_since(since: str) -> bool:
+    """Whether `--since` is a window this module can read. An unreadable one
+    used to fall through to no cutoff at all, so `--since 7d` printed the whole
+    history under the heading `since 7d`."""
+    import re
+    return re.match(SINCE_RE, since.strip()) is not None
+
+
 def _cutoff(since: str) -> Optional[str]:
     """`7.days` / `6.months` -> an ISO timestamp to compare strings against."""
     import re
     from datetime import datetime, timedelta, timezone
-    m = re.match(r"^(\d+)\.(day|days|week|weeks|month|months|year|years)$", since.strip())
+    m = re.match(SINCE_RE, since.strip())
     if not m:
         return None
     count = int(m.group(1))
@@ -89,6 +109,15 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
     flood_seen_tokens = 0
     flood_passed_tokens = 0
     passed_families: Dict[str, int] = {}
+    # Ranged reads recorded before each row carried its path and the change in
+    # its file's credit. Each of those rows holds `whole - window` on its own,
+    # so a file read in three windows was credited near three times over; they
+    # are folded per file here, with the session and the file's size standing
+    # in for the path the row never had. `_fold_old_ranged` does the sum.
+    old_ranged: Dict[tuple, List[tuple]] = {}
+    consulted: Dict[str, Dict[str, int]] = {
+        c: {"calls": 0, "hits": 0} for c in CONSULT_COMMANDS}
+    blocked_codes: Dict[str, int] = {}
     for row in util.read_jsonl(ctx.ledger):
         ts = str(row.get("ts", ""))
         if cutoff and ts < cutoff:
@@ -97,8 +126,19 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
         if event in counts:
             counts[event] += 1
         tokens = int(row.get("tokens", 0) or 0)
-        if event in ("dup_warned", "dup_denied", "ranged_steered"):
+        # `dup_warned` is not here: in `warn` mode the read goes ahead, so a
+        # warned duplicate is tokens that entered, not tokens kept out. It was
+        # credited whole to avoided until 2026-09-22.
+        if event == "dup_denied":
             avoided += tokens
+        if event == "ranged_steered":
+            if "path" in row or "whole_tokens" not in row:
+                avoided += tokens
+            else:
+                key = (str(row.get("session", "")), int(row.get("whole_tokens", 0) or 0))
+                old_ranged.setdefault(key, []).append(
+                    (int(row.get("whole_tokens", 0) or 0),
+                     int(row.get("read_tokens", 0) or 0)))
         if event == "injected":
             injected += tokens
         if event == "read_flood":
@@ -111,6 +151,15 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
             flood_passed_tokens += tokens
             family = str(row.get("family", "?"))
             passed_families[family] = passed_families.get(family, 0) + 1
+        if event == "consulted":
+            command = str(row.get("command", ""))
+            if command in consulted:
+                consulted[command]["calls"] += 1
+                if int(row.get("hits", 0) or 0) > 0:
+                    consulted[command]["hits"] += 1
+        if event == "lint_blocked":
+            for code, n in (row.get("codes") or {}).items():
+                blocked_codes[str(code)] = blocked_codes.get(str(code), 0) + int(n or 0)
         at = row.get("at_call")
         sess = str(row.get("session", ""))
         if at is not None:
@@ -127,6 +176,7 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
             gov_entered += int(row.get("entered_tokens", 0) or 0)
             family = str(row.get("family", "?"))
             gov_families[family] = gov_families.get(family, 0) + 1
+    avoided += _fold_old_ranged(old_ranged)
     return {
         "since": since,
         "index_hits": counts["index_hit"],
@@ -135,9 +185,12 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
         "dup_denied": counts["dup_denied"],
         "ranged_steered": counts["ranged_steered"],
         "nudges": counts["nudge_commit"] + counts["nudge_stop"],
-        # No longer `_est`: every contributor is a real size now -- a
+        # No longer `_est`: every contributor is a real size now -- a refused
         # duplicate read is the file as the scan measured it, a ranged read is
-        # the whole file minus the window that was actually returned.
+        # the whole file minus the windows that were actually returned, per
+        # file, and nothing once the windows cover it. Still a counterfactual
+        # for a ranged read: it assumes the whole file would otherwise have
+        # been read, which is what the refusal and the hint steer away from.
         "tokens_avoided": avoided,
         "tokens_injected": injected,
         "governed_calls": counts["governed"],
@@ -180,6 +233,14 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
         "carry_cost": _carry(spans, carried, "cost"),
         "carry_saved": _carry(spans, carried, "saved"),
         "carry_basis": "turns after each event, per session",
+        # Whether the written-down knowledge is read at all: calls to each
+        # consulting command, and how many of them returned anything. Not a
+        # token figure and never added to one.
+        "consulted": consulted,
+        # Commits the privacy rule stopped: `lint --staged` runs that found a
+        # hard-fail code, by code.
+        "lint_blocked": counts["lint_blocked"],
+        "lint_blocked_codes": blocked_codes,
     }
 
 
@@ -194,7 +255,7 @@ _SUMMABLE = (
     "floods_seen", "floods_passed", "flood_passed_tokens",
     "read_floods", "read_flood_tokens", "big_reads_denied",
     "denied_tokens", "flood_seen_tokens",
-    "carry_cost", "carry_saved")
+    "carry_cost", "carry_saved", "lint_blocked")
 
 
 def summarise_all(root: Path, since: str = "7.days") -> Dict[str, Any]:
@@ -242,6 +303,8 @@ def _is_idle(data: Dict[str, Any]) -> bool:
     rather than a table row."""
     if any(int(data.get(key, 0) or 0) for key in _SUMMABLE):
         return False
+    if any(int(v.get("calls", 0) or 0) for v in (data.get("consulted") or {}).values()):
+        return False
     return not (data.get("governed_families") or {})
 
 
@@ -251,16 +314,39 @@ def _aggregate(repos: List[Dict[str, Any]], since: str) -> Dict[str, Any]:
         total[key] = sum(int(r.get(key, 0) or 0) for r in repos)
     families: Dict[str, int] = {}
     passed: Dict[str, int] = {}
+    blocked: Dict[str, int] = {}
+    consulted: Dict[str, Dict[str, int]] = {
+        c: {"calls": 0, "hits": 0} for c in CONSULT_COMMANDS}
     for r in repos:
         for family, count in (r.get("governed_families") or {}).items():
             families[family] = families.get(family, 0) + int(count or 0)
         for family, count in (r.get("passed_families") or {}).items():
             passed[family] = passed.get(family, 0) + int(count or 0)
+        for code, count in (r.get("lint_blocked_codes") or {}).items():
+            blocked[code] = blocked.get(code, 0) + int(count or 0)
+        for command, c in (r.get("consulted") or {}).items():
+            if command in consulted:
+                consulted[command]["calls"] += int(c.get("calls", 0) or 0)
+                consulted[command]["hits"] += int(c.get("hits", 0) or 0)
     total["governed_families"] = families
     total["passed_families"] = passed
+    total["lint_blocked_codes"] = blocked
+    total["consulted"] = consulted
     total["governed_saved_tokens"] = max(
         0, total["governed_original_tokens"] - total["governed_entered_tokens"])
     total["carry_basis"] = "turns after each event, per session"
+    return total
+
+
+def _fold_old_ranged(groups: Dict[tuple, List[tuple]]) -> int:
+    """The credit for ranged rows that predate the per-file accounting: per
+    file (session and file size standing in for the path), the whole file less
+    every window returned, floored at zero. Two files of the same size read in
+    one session fold together and understate; that is the conservative side."""
+    total = 0
+    for rows in groups.values():
+        whole = max(w for w, _ in rows)
+        total += max(0, whole - sum(r for _, r in rows))
     return total
 
 

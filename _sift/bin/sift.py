@@ -208,7 +208,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("id", nargs="?")
     s.add_argument("--markdown", action="store_true")
 
-    s = cmd("ledger", "what the index and governor saved this period",
+    s = cmd("ledger", "what the index and governor saved this period, and "
+            "whether the knowledge is read",
             "sift ledger", "sift ledger --all", "sift ledger --since 30.days",
             "sift ledger --repo ~/Projects/sftx-os")
     # The output is terse by design; the glossary that makes it readable lives
@@ -221,16 +222,19 @@ def build_parser() -> argparse.ArgumentParser:
         "  tokens avoided     tokens sift kept out of context.\n"
         "  tokens introduced  tokens that reached context anyway.\n"
         "  net tokens saved   avoided minus introduced.\n"
-        "A read that was refused or de-duplicated never enters, so it counts\n"
-        "whole to avoided; a condensed Bash flood is split -- the bytes cut go\n"
-        "to avoided, the smaller remainder that entered goes to introduced.\n"
+        "A refused duplicate read never enters, so it counts whole to avoided;\n"
+        "a condensed Bash flood is split -- the bytes cut go to avoided, the\n"
+        "smaller remainder that entered goes to introduced.\n"
         "\n"
         "avoided, by source:\n"
-        "  duplicate / ranged reads stopped  re-reads of a file already in\n"
-        "      context, and whole-file reads steered to a range. Count, and\n"
-        "      the measured tokens they would have added.\n"
+        "  duplicates refused / ranged reads  re-reads refused of a file already\n"
+        "      in context, and files read in ranges instead of whole. A ranged\n"
+        "      file is credited once with the file minus every window returned,\n"
+        "      however many windows, and nothing once they cover it; a read\n"
+        "      the hook only warned about went ahead and is not credited.\n"
         "  big reads refused -> ranges  big whole-file reads refused up front\n"
-        "      so the model re-read a range instead. Count and their size.\n"
+        "      so the model read a range instead. Count and size; the saving\n"
+        "      is the ranged reads that followed, on the line above.\n"
         "  Bash outputs condensed  large command outputs replaced in place\n"
         "      with a condensed form. Count and the tokens cut.\n"
         "\n"
@@ -251,11 +255,18 @@ def build_parser() -> argparse.ArgumentParser:
         "  commit / stop reminders the hooks raised (nudges). A miss records\n"
         "  its path and reason (stale = a real file not indexed, absent = a\n"
         "  path not on disk) in the ledger for evaluation, not in this summary.\n"
+        "consulted: calls to sift search, bug find and decisions, and how\n"
+        "  many returned anything. The written-down knowledge saves no tokens;\n"
+        "  this is whether it is read at all. Not added to any token figure.\n"
+        "commits blocked by lint: lint --staged runs that found a hard-fail\n"
+        "  code (a secret, a machine path, a tracked local/ file), by code --\n"
+        "  the commits the pre-commit hook refused.\n"
         "\n"
-        "The one line in a different unit: because a token in context is\n"
-        "re-sent on every later turn, condensing's saving is also counted in\n"
-        "token-turns (tokens x the turns they would have ridden). Mostly cache\n"
-        "reads at roughly a tenth of the fresh price, so do not price as fresh.")
+        "The block in a different unit: because a token in context is re-sent\n"
+        "on every later turn, what entered (carried in) and what condensing\n"
+        "kept out are also counted in token-turns (tokens x the turns that\n"
+        "followed, to the last tool call the ledger saw). Mostly cache reads\n"
+        "at roughly a tenth of the fresh price, so do not price as fresh.")
     s.add_argument("--since", default="7.days",
                    help="time window to summarise, e.g. 7.days or 30.days "
                         "(default: 7.days)")
@@ -742,9 +753,15 @@ class App:
         self.out.emit(shown)
         return EXIT_OK
 
+    def _consulted(self, command: str, hits: int) -> None:
+        """One consulting call, counted (D-20260922-03). The command and how
+        many rows came back; never the query, which is whatever was typed."""
+        ledger_mod.record(self.ctx, "cli", "consulted", command=command, hits=int(hits))
+
     def cmd_search(self) -> int:
         rows = search_mod.search(self.ctx, self.cfg, self.args.query,
                                  top=self.args.top, layer=self.args.layer)
+        self._consulted("search", len(rows))
         if not self.out.json_mode:
             if not rows:
                 self.out.line('no results for "{}"'.format(self.args.query))
@@ -782,6 +799,16 @@ class App:
         self.out.emit({"issues": issues, "summary": summary})
         advisory = bool(self.cfg.get("ci", "advisory", default=True))
         if summary["errors"]:
+            if self.args.staged and not self.args.only:
+                # A staged run that found a hard-fail code is the commit the
+                # pre-commit hook refuses: the privacy rule's one hard outcome,
+                # counted by code (D-20260922-03). The hook's confirming second
+                # pass carries `--only`, so it is not counted twice.
+                codes: Dict[str, int] = {}
+                for issue in issues:
+                    if issue["severity"] == lint_mod.SEV_ERROR:
+                        codes[issue["code"]] = codes.get(issue["code"], 0) + 1
+                ledger_mod.record(self.ctx, "cli", "lint_blocked", codes=codes)
             return EXIT_FINDINGS
         if self.args.ci and summary["warnings"] and not advisory:
             return EXIT_FINDINGS
@@ -844,6 +871,7 @@ class App:
             return EXIT_OK
         if self.args.bug_cmd == "find":
             rows = journal_mod.find_bugs(self.ctx, self.args.query, top=self.args.top)
+            self._consulted("bug_find", len(rows))
             if not self.out.json_mode:
                 if not rows:
                     self.out.line("no known bug matches that")
@@ -880,9 +908,12 @@ class App:
         rows = journal_mod.decisions(self.ctx)
         if self.args.id:
             rows = [r for r in rows if r.get("id") == self.args.id]
+            self._consulted("decisions", len(rows))
             if not rows:
                 self.out.fail("NOTFOUND", "no decision " + self.args.id)
                 return EXIT_USAGE
+        else:
+            self._consulted("decisions", len(rows))
         if not self.out.json_mode:
             if not rows:
                 self.out.line("no decisions recorded - `sift decide` writes one")
@@ -973,6 +1004,10 @@ class App:
         return EXIT_OK
 
     def cmd_ledger(self) -> int:
+        if not ledger_mod.valid_since(self.args.since):
+            self.out.fail("USAGE", "--since takes N.days, N.weeks, N.months or "
+                          "N.years (e.g. 7.days), not {!r}".format(self.args.since))
+            return EXIT_USAGE
         if self.args.all:
             if getattr(self.args, "repo", None):
                 self.out.fail("USAGE", "--repo names one repo; drop it, or use "
@@ -1052,19 +1087,22 @@ class App:
         """The three headline figures, in one unit (one-off tokens), from one
         place so the table and the detail agree.
 
-        avoided: tokens sift kept out of context -- reads not re-read or
-        steered to ranges, big reads refused, and the bytes condensing shrank
-        off a Bash flood. introduced: tokens that reached context -- whole-file
-        reads that came back, Bash floods at their post-condensing size, the
-        floods of families the governor never condenses that entered whole, and
-        the context sift injected. net: avoided minus introduced. A refused or
-        de-duplicated read never enters, so it is credited whole to avoided and
+        avoided: tokens sift kept out of context -- duplicate reads refused,
+        files read in ranges rather than whole, and the bytes condensing
+        shrank off a Bash flood. introduced: tokens that reached context --
+        whole-file reads that came back, Bash floods at their post-condensing
+        size, the floods of families the governor never condenses that entered
+        whole, and the context sift injected. net: avoided minus introduced. A
+        refused duplicate never enters, so it is credited whole to avoided and
         nothing to introduced; a condensed flood is split -- the saving to
-        avoided, the entered remainder to introduced."""
+        avoided, the entered remainder to introduced.
+
+        `denied_tokens` is deliberately not added: a big read refused is
+        realised as the ranged reads that follow it, which `tokens_avoided`
+        already holds, so adding the refusal booked the same file twice (and
+        a third time per extra window, before the per-file fold)."""
         saved_condensed = int(data.get("governed_saved_tokens", 0) or 0)
-        avoided = (int(data.get("tokens_avoided", 0) or 0)
-                   + int(data.get("denied_tokens", 0) or 0)
-                   + saved_condensed)
+        avoided = int(data.get("tokens_avoided", 0) or 0) + saved_condensed
         bash_entered = max(0, int(data.get("flood_seen_tokens", 0) or 0)
                            - saved_condensed)
         introduced = (int(data.get("read_flood_tokens", 0) or 0)
@@ -1078,13 +1116,16 @@ class App:
         `tokens introduced`. Shared so the single-repo view and the `--all`
         total render the sources the one way."""
         _, _, _, bash_entered = self._ledger_flow(data)
-        dup = data["dup_warned"] + data["dup_denied"]
         ranged = int(data.get("ranged_steered", 0) or 0)
         self.out.line("avoided, by source:")
         self.out.line("  {:<33} {:>6}   {} tokens".format(
-            "duplicate / ranged reads stopped", util.num(dup + ranged),
+            "duplicates refused / ranged reads",
+            util.num(data["dup_denied"] + ranged),
             util.num(data["tokens_avoided"])))
-        self.out.line("  {:<33} {:>6}   {} tokens".format(
+        # Count and size, but no tokens column: the refusal's saving is the
+        # ranged reads it led to, on the line above. Adding it here as well
+        # was a double count.
+        self.out.line("  {:<33} {:>6}   ({} tokens refused; counted above)".format(
             "big reads refused -> ranges", util.num(data["big_reads_denied"]),
             util.num(data["denied_tokens"])))
         self.out.line("  {:<33} {:>6}   {} tokens".format(
@@ -1115,17 +1156,46 @@ class App:
         never read against the tokens above) and the index line. Shared by the
         single-repo view and the `--all` total."""
         saved_tt = int(data.get("carry_saved", 0) or 0)
-        if saved_tt:
-            mult = saved_tt / max(1, int(data.get("governed_saved_tokens", 0) or 0))
+        cost_tt = int(data.get("carry_cost", 0) or 0)
+        if saved_tt or cost_tt:
+            # Both sides, or neither. Only the saving was printed until
+            # 2026-09-22, with the cost left in the JSON; a balance that shows
+            # one side is an advertisement.
             self.out.line("")
-            self.out.line(
-                "condensing also keeps those tokens out of every later turn: "
-                "{} token-turns kept out (~{:.0f}x the one-off saving).".format(
-                    util.num(saved_tt), mult))
+            self.out.line("in token-turns (size x the turns that followed):")
+            self.out.line("  {:<33} {:>13}   floods and injected context, re-sent "
+                          "each later turn".format("carried in", util.num(cost_tt)))
+            mult = saved_tt / max(1, int(data.get("governed_saved_tokens", 0) or 0))
+            self.out.line("  {:<33} {:>13}   condensing kept out (~{:.0f}x its one-off "
+                          "saving)".format("kept out", util.num(saved_tt), mult))
         self.out.line("")
-        self.out.line("index: {} hits, {} misses, {} nudges".format(
+        warned = int(data.get("dup_warned", 0) or 0)
+        self.out.line("index: {} hits, {} misses, {} nudges{}".format(
             util.num(data["index_hits"]), util.num(data["index_misses"]),
-            util.num(data["nudges"])))
+            util.num(data["nudges"]),
+            ", {} warned (read anyway, not credited)".format(
+                util.count(warned, "duplicate")) if warned else ""))
+        # The knowledge artefacts, in the only terms they can be measured:
+        # were they read, and did the privacy rule stop anything. Always
+        # shown, because a zero here is the evidence too.
+        consulted = data.get("consulted") or {}
+        labels = (("search", "search"), ("bug_find", "bug find"),
+                  ("decisions", "decisions"))
+        parts = []
+        for key, label in labels:
+            c = consulted.get(key) or {}
+            calls = int(c.get("calls", 0) or 0)
+            parts.append("{} {}{}".format(
+                label, util.num(calls),
+                " ({} with hits)".format(util.num(int(c.get("hits", 0) or 0)))
+                if calls and key != "decisions" else ""))
+        self.out.line("consulted: " + ", ".join(parts))
+        blocked = int(data.get("lint_blocked", 0) or 0)
+        codes = data.get("lint_blocked_codes") or {}
+        self.out.line("commits blocked by lint: {}{}".format(
+            util.num(blocked),
+            " ({})".format(", ".join("{} {}".format(k, v) for k, v in sorted(
+                codes.items(), key=lambda kv: -kv[1]))) if codes else ""))
 
     def _ledger_help_hint(self) -> None:
         self.out.line("")
