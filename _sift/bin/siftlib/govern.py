@@ -94,6 +94,38 @@ def _classify_one(segment: str) -> str:
     return "unknown"
 
 
+# Interpreters and runners whose own name says nothing about what printed: for
+# these the label is the script or subcommand they were given instead.
+_RUNNERS = {"python", "python3", "node", "bash", "sh", "zsh", "ruby", "perl",
+            "deno", "bun", "npx", "uv", "poetry", "pipenv", "npm", "yarn",
+            "pnpm", "cargo", "go", "make"}
+
+
+def command_label(command: str) -> str:
+    """A short, path-free name for what produced a command's output.
+
+    Recorded on a passed-through flood so the ledger can say which commands
+    flood, not only that `unknown` ones do. `cd <dir> &&` segments are skipped,
+    as they print nothing; an interpreter or runner is named with its script's
+    basename or its subcommand (`python3 candidates.py`, `npm run`), and a
+    path is never kept whole, since the ledger must not carry one out of the
+    repo.
+    """
+    for segment in _SEGMENT_RE.split(command or ""):
+        words = _ENV_PREFIX_RE.sub("", segment.strip(), count=1).split()
+        if not words or words[0] == "cd":
+            continue
+        head = words[0].rsplit("/", 1)[-1]
+        if head in _RUNNERS:
+            rest = [w for w in words[1:] if not w.startswith("-")]
+            if rest[:1] == ["run"] and len(rest) > 1:
+                rest = rest[1:]
+            if rest:
+                return "%s %s" % (head, rest[0].rsplit("/", 1)[-1][:40])
+        return head[:40]
+    return "?"
+
+
 def classify(command: str) -> str:
     """Which output family a command belongs to.
 

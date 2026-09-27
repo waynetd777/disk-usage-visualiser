@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -216,17 +217,24 @@ def build_parser() -> argparse.ArgumentParser:
     # here, in `sift ledger --help`, not in every run. One line per metric, in
     # the order they print.
     s.description = (
-        "what the index and governor kept out of context this period\n"
+        "what sift saved this period\n"
         "\n"
-        "One balance, all in one-off tokens so the three figures subtract:\n"
-        "  tokens avoided     tokens sift kept out of context.\n"
-        "  tokens introduced  tokens that reached context anyway.\n"
-        "  net tokens saved   avoided minus introduced.\n"
-        "A refused duplicate read never enters, so it counts whole to avoided;\n"
-        "a condensed Bash flood is split -- the bytes cut go to avoided, the\n"
-        "smaller remainder that entered goes to introduced.\n"
+        "The default is the headline only; --verbose adds every breakdown.\n"
+        "All figures are one-off tokens.\n"
+        "  saved             kept out minus sift's own additions: what sift is\n"
+        "      responsible for, net.\n"
+        "  kept out          tokens sift stopped entering context: duplicate\n"
+        "      reads refused, files read in ranges instead of whole, and the\n"
+        "      bytes condensing cut off a Bash flood.\n"
+        "  sift's additions  context sift itself injected (index hints,\n"
+        "      warnings, rule reminders).\n"
+        "  got through       big outputs that reached context anyway: whole\n"
+        "      files read after ranges were offered, Bash floods at the size\n"
+        "      they entered, and floods of a family sift never condenses. Not\n"
+        "      subtracted from saved -- sift did not cause them; it is what is\n"
+        "      left to catch.\n"
         "\n"
-        "avoided, by source:\n"
+        "--verbose, kept out by source:\n"
         "  duplicates refused / ranged reads  re-reads refused of a file already\n"
         "      in context, and files read in ranges instead of whole. A ranged\n"
         "      file is credited once with the file minus every window returned,\n"
@@ -238,35 +246,29 @@ def build_parser() -> argparse.ArgumentParser:
         "  Bash outputs condensed  large command outputs replaced in place\n"
         "      with a condensed form. Count and the tokens cut.\n"
         "\n"
-        "introduced, by source:\n"
+        "--verbose, got through by source:\n"
         "  whole files read anyway  big reads taken whole after ranges were\n"
-        "      offered, so they landed in context. Count and their tokens.\n"
+        "      offered. Count and their tokens.\n"
         "  Bash floods, after condensing  Bash outputs over the threshold, at\n"
-        "      the size that actually entered (condensed where condensing was\n"
-        "      on). Count is every flood; tokens are what entered.\n"
+        "      the size that actually entered. Count is every flood; tokens\n"
+        "      are what entered.\n"
         "  Bash floods passed through  floods of a family the governor never\n"
-        "      condenses (test, build, an unclassifiable chain). They entered\n"
-        "      whole; the family tally says which. Only shown when there are\n"
-        "      any.\n"
-        "  context sift injected  context sift itself added (index hints,\n"
-        "      warnings).\n"
+        "      condenses (test, build, an unclassifiable chain), by family,\n"
+        "      then the commands that printed the most.\n"
         "\n"
-        "index: lookups the index answered (hits) or could not (misses), and\n"
-        "  commit / stop reminders the hooks raised (nudges). A miss records\n"
-        "  its path and reason (stale = a real file not indexed, absent = a\n"
-        "  path not on disk) in the ledger for evaluation, not in this summary.\n"
-        "consulted: calls to sift search, bug find and decisions, and how\n"
-        "  many returned anything. The written-down knowledge saves no tokens;\n"
-        "  this is whether it is read at all. Not added to any token figure.\n"
-        "commits blocked by lint: lint --staged runs that found a hard-fail\n"
-        "  code (a secret, a machine path, a tracked local/ file), by code --\n"
-        "  the commits the pre-commit hook refused.\n"
-        "\n"
-        "The block in a different unit: because a token in context is re-sent\n"
-        "on every later turn, what entered (carried in) and what condensing\n"
-        "kept out are also counted in token-turns (tokens x the turns that\n"
-        "followed, to the last tool call the ledger saw). Mostly cache reads\n"
-        "at roughly a tenth of the fresh price, so do not price as fresh.")
+        "--verbose, the rest:\n"
+        "  token-turns: a token in context is re-sent on every later turn, so\n"
+        "      what entered (carried in) and what condensing kept out are also\n"
+        "      counted as tokens x the turns that followed. Mostly cache reads\n"
+        "      at roughly a tenth of the fresh price, so do not price as fresh.\n"
+        "  index: lookups the index answered (hits) or could not (misses), and\n"
+        "      commit / stop reminders the hooks raised (nudges).\n"
+        "  consulted: calls to sift search, bug find and decisions, and how\n"
+        "      many returned anything. Not added to any token figure.\n"
+        "  commits blocked by lint: pre-commit runs that found a hard-fail\n"
+        "      code (a secret, a machine path, a tracked local/ file), by code.")
+    s.add_argument("-v", "--verbose", action="store_true",
+                   help="every breakdown, not just the headline")
     s.add_argument("--since", default="7.days",
                    help="time window to summarise, e.g. 7.days or 30.days "
                         "(default: 7.days)")
@@ -1018,6 +1020,8 @@ class App:
             self.out.fail("USAGE", "--root only means something with --all")
             return EXIT_USAGE
         data = ledger_mod.summarise(self.ctx, self.args.since)
+        data["tokens_saved"], _, _, data["tokens_got_through"] = \
+            self._ledger_saved(data)
         if not self.out.json_mode:
             self._print_ledger(data, advise=True)
         self.out.emit(data)
@@ -1028,47 +1032,43 @@ class App:
         if root is None:
             return EXIT_ENV
         summary = ledger_mod.summarise_all(root, self.args.since)
+        verbose = bool(getattr(self.args, "verbose", False))
+        total = summary["total"]
+        total["tokens_saved"], _, _, total["tokens_got_through"] = \
+            self._ledger_saved(total)
         if not self.out.json_mode:
-            self.out.line("since {}: ledger data in {} of {} under {}".format(
-                summary["since"], util.num(summary["repo_count"]),
-                util.count(summary["repos_found"], "repo"), summary["root"]))
-            if summary["repos"]:
+            if not summary["repos"]:
+                self.out.line("{}: no ledger data in {} under {}".format(
+                    self._window(summary["since"]),
+                    util.count(summary["repos_found"], "installed repo"),
+                    summary["root"]))
+            else:
+                self._ledger_headline(summary["since"], total["tokens_saved"],
+                                      util.count(summary["repo_count"], "repo"))
                 self.out.line("")
-                # The same three headline figures as the single-repo view, one
-                # row per repo, computed the one way in `_ledger_flow`, and a
-                # final total row -- the header above already gives the period
-                # and repo count, and the legend the meaning, so no separate
-                # total block repeats them. All one-off tokens.
-                self.out.line("tokens: avoided = kept out of context, "
-                              "introduced = reached context, net = the two "
-                              "subtracted.")
+                # One row per repo in the headline's own two terms, so the
+                # table and the sentence above it cannot disagree.
                 rows = []
                 for r in summary["repos"]:
-                    a, i, n, _ = self._ledger_flow(r)
-                    rows.append([r["repo"], util.num(r["index_hits"]),
-                                 util.num(a), util.num(i), util.num(n)])
-                ta, ti, tn, _ = self._ledger_flow(summary["total"])
-                rows.append(["total", util.num(summary["total"]["index_hits"]),
-                             util.num(ta), util.num(ti),
-                             self._net(util.num(tn), tn)])
-                self.out.table(
-                    rows, ["repo", "hits", "avoided", "introduced", "net"])
-                # Where the total's avoided and introduced came from, across
-                # every repo. The three headline numbers are the total row
-                # above, so only the sources need repeating.
-                self.out.line("")
-                self.out.line("breakdown:")
-                self._ledger_breakdown(summary["total"])
-                self._ledger_carry_and_index(summary["total"])
-            if summary["idle"]:
-                # Named, not just counted: the header says how many are idle,
-                # this says which, so the gap is actionable without a script.
-                self.out.line("")
-                self.out.line("{} with no ledger data in this window: {}".format(
-                    util.count(len(summary["idle"]), "installed repo"),
-                    ", ".join(summary["idle"])))
-            if summary["repo_count"]:
-                self._ledger_help_hint()
+                    saved, _, _, through = self._ledger_saved(r)
+                    rows.append([r["repo"], self._net(util.num(saved), saved),
+                                 util.num(through)])
+                rows.append(["total",
+                             self._net(util.num(total["tokens_saved"]),
+                                       total["tokens_saved"]),
+                             util.num(total["tokens_got_through"])])
+                self.out.table(rows, ["repo", "saved", "got through"])
+                if verbose:
+                    self.out.line("")
+                    self.out.line("across all repos:")
+                    self._ledger_breakdown(total)
+                    self._ledger_carry_and_index(total)
+                    if summary["idle"]:
+                        self.out.line("")
+                        self.out.line("{} with no ledger data in this window: {}".format(
+                            util.count(len(summary["idle"]), "installed repo"),
+                            ", ".join(summary["idle"])))
+                self._ledger_help_hint("sift ledger --all")
         self.out.emit(summary)
         return EXIT_OK
 
@@ -1111,13 +1111,40 @@ class App:
                       + int(data.get("tokens_injected", 0) or 0))
         return avoided, introduced, avoided - introduced, bash_entered
 
+    @classmethod
+    def _ledger_saved(cls, data: dict) -> tuple:
+        """The headline: (saved, kept out, sift's additions, got through).
+
+        saved is what sift is answerable for -- what it kept out, less what it
+        put in itself. What got through anyway is shown beside it, never
+        subtracted: a test run sift leaves whole on purpose, or a script sift
+        cannot classify, is not a cost sift caused, and netting it against the
+        saving (D-20260921-02) produced a large negative that read as sift
+        costing tokens when it had saved them."""
+        kept_out, introduced, _, _ = cls._ledger_flow(data)
+        added = int(data.get("tokens_injected", 0) or 0)
+        return kept_out - added, kept_out, added, introduced - added
+
+    @staticmethod
+    def _window(since: str) -> str:
+        m = re.match(r"^(\d+)\.(\w+?)s?$", since or "")
+        if not m:
+            return "since " + since
+        n, unit = int(m.group(1)), m.group(2)
+        return "last {} {}".format(n, unit if n == 1 else unit + "s")
+
+    def _ledger_headline(self, since: str, saved: int, where: str = "") -> None:
+        self.out.line("{}: sift saved {} tokens{}".format(
+            self._window(since), self._net(util.num(saved), saved),
+            " across " + where if where else ""))
+
     def _ledger_breakdown(self, data: dict) -> None:
         """The two by-source tables that add up to `tokens avoided` and
         `tokens introduced`. Shared so the single-repo view and the `--all`
         total render the sources the one way."""
         _, _, _, bash_entered = self._ledger_flow(data)
         ranged = int(data.get("ranged_steered", 0) or 0)
-        self.out.line("avoided, by source:")
+        self.out.line("kept out, by source:")
         self.out.line("  {:<33} {:>6}   {} tokens".format(
             "duplicates refused / ranged reads",
             util.num(data["dup_denied"] + ranged),
@@ -1132,7 +1159,7 @@ class App:
             "Bash outputs condensed", util.num(data["governed_calls"]),
             util.num(data["governed_saved_tokens"])))
         self.out.line("")
-        self.out.line("introduced, by source:")
+        self.out.line("got through, by source:")
         self.out.line("  {:<33} {:>6}   {} tokens".format(
             "whole files read anyway", util.num(data["read_floods"]),
             util.num(data["read_flood_tokens"])))
@@ -1148,8 +1175,17 @@ class App:
             self.out.line("  {:<33} {:>6}   {} tokens{}".format(
                 "Bash floods passed through", util.num(passed),
                 util.num(int(data.get("flood_passed_tokens", 0) or 0)), tail))
-        self.out.line("  {:<33} {:>6}   {} tokens".format(
-            "context sift injected", "-", util.num(data["tokens_injected"])))
+            # Which commands, by what they put in. Rows recorded before the
+            # command was logged have none and show as `?`.
+            commands = sorted((data.get("passed_commands") or {}).items(),
+                              key=lambda kv: -int(kv[1].get("tokens", 0) or 0))
+            for label, c in commands[:5]:
+                self.out.line("    {:<31} {:>6}   {} tokens".format(
+                    "(not recorded)" if label == "?" else label[:31], util.num(int(c.get("count", 0) or 0)),
+                    util.num(int(c.get("tokens", 0) or 0))))
+        self.out.line("")
+        self.out.line("sift's additions: {} tokens of context it injected".format(
+            util.num(data["tokens_injected"])))
 
     def _ledger_carry_and_index(self, data: dict) -> None:
         """The carry line (the one figure in token-turns, kept apart so it is
@@ -1197,27 +1233,35 @@ class App:
             " ({})".format(", ".join("{} {}".format(k, v) for k, v in sorted(
                 codes.items(), key=lambda kv: -kv[1]))) if codes else ""))
 
-    def _ledger_help_hint(self) -> None:
+    def _ledger_help_hint(self, command: str = "sift ledger") -> None:
         self.out.line("")
-        self.out.line("what these mean: run {}".format(
-            self.out.action("sift ledger --help")))
+        if getattr(self.args, "verbose", False):
+            self.out.line("what these mean: {}".format(
+                self.out.action("sift ledger --help")))
+        else:
+            self.out.line("details: {}".format(
+                self.out.action(command + " --verbose")))
 
     def _print_ledger(self, data: dict, advise: bool) -> None:
-        avoided, introduced, net, _ = self._ledger_flow(data)
-        self.out.line("since {}:".format(data["since"]))
+        saved, kept_out, added, through = self._ledger_saved(data)
+        ranged = int(data.get("tokens_avoided", 0) or 0)
+        condensed = int(data.get("governed_saved_tokens", 0) or 0)
+        self._ledger_headline(data["since"], saved)
         self.out.line("")
-        # The headline balance, in one unit so the three actually subtract:
-        # kept out of context, reached context, and the difference.
-        self.out.line("  tokens avoided     {:>13}   kept out of context".format(
-            util.num(avoided)))
-        self.out.line("  tokens introduced  {:>13}   reached context".format(
-            util.num(introduced)))
-        self.out.line("  net tokens saved   {}".format(
-            self._net(util.num(net).rjust(13), net)))
+        # The two lines that make up saved, then what is left to catch, set
+        # apart because it is not part of the sum.
+        self.out.line("  kept out     {:>11}   reads {}, Bash output {}".format(
+            util.num(kept_out), util.num(ranged), util.num(condensed)))
+        self.out.line("  sift added   {:>11}   hints and warnings it injected".format(
+            util.num(-added) if added else "0"))
+        self.out.line("")
+        self.out.line("  got through  {:>11}   big outputs sift did not shrink".format(
+            util.num(through)))
 
-        self.out.line("")
-        self._ledger_breakdown(data)
-        self._ledger_carry_and_index(data)
+        if getattr(self.args, "verbose", False):
+            self.out.line("")
+            self._ledger_breakdown(data)
+            self._ledger_carry_and_index(data)
 
         # Advice is the live config's business, not the counts', and only for a
         # single repo -- a machine-wide total has no one setting to advise on.

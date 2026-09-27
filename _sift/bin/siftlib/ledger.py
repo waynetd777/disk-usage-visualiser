@@ -109,6 +109,7 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
     flood_seen_tokens = 0
     flood_passed_tokens = 0
     passed_families: Dict[str, int] = {}
+    passed_commands: Dict[str, Dict[str, int]] = {}
     # Ranged reads recorded before each row carried its path and the change in
     # its file's credit. Each of those rows holds `whole - window` on its own,
     # so a file read in three windows was credited near three times over; they
@@ -151,6 +152,10 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
             flood_passed_tokens += tokens
             family = str(row.get("family", "?"))
             passed_families[family] = passed_families.get(family, 0) + 1
+            label = str(row.get("command") or "?")
+            entry = passed_commands.setdefault(label, {"count": 0, "tokens": 0})
+            entry["count"] += 1
+            entry["tokens"] += tokens
         if event == "consulted":
             command = str(row.get("command", ""))
             if command in consulted:
@@ -212,6 +217,7 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
         "floods_passed": counts["flood_passed"],
         "flood_passed_tokens": flood_passed_tokens,
         "passed_families": passed_families,
+        "passed_commands": passed_commands,
         # The same count for the Read tool, which is where the first real
         # sessions put most of the tokens: whole-file reads that came back over
         # the threshold, what they weighed, and how many `big_read_mode: deny`
@@ -314,6 +320,7 @@ def _aggregate(repos: List[Dict[str, Any]], since: str) -> Dict[str, Any]:
         total[key] = sum(int(r.get(key, 0) or 0) for r in repos)
     families: Dict[str, int] = {}
     passed: Dict[str, int] = {}
+    commands: Dict[str, Dict[str, int]] = {}
     blocked: Dict[str, int] = {}
     consulted: Dict[str, Dict[str, int]] = {
         c: {"calls": 0, "hits": 0} for c in CONSULT_COMMANDS}
@@ -322,6 +329,10 @@ def _aggregate(repos: List[Dict[str, Any]], since: str) -> Dict[str, Any]:
             families[family] = families.get(family, 0) + int(count or 0)
         for family, count in (r.get("passed_families") or {}).items():
             passed[family] = passed.get(family, 0) + int(count or 0)
+        for label, c in (r.get("passed_commands") or {}).items():
+            entry = commands.setdefault(label, {"count": 0, "tokens": 0})
+            entry["count"] += int(c.get("count", 0) or 0)
+            entry["tokens"] += int(c.get("tokens", 0) or 0)
         for code, count in (r.get("lint_blocked_codes") or {}).items():
             blocked[code] = blocked.get(code, 0) + int(count or 0)
         for command, c in (r.get("consulted") or {}).items():
@@ -330,6 +341,7 @@ def _aggregate(repos: List[Dict[str, Any]], since: str) -> Dict[str, Any]:
                 consulted[command]["hits"] += int(c.get("hits", 0) or 0)
     total["governed_families"] = families
     total["passed_families"] = passed
+    total["passed_commands"] = commands
     total["lint_blocked_codes"] = blocked
     total["consulted"] = consulted
     total["governed_saved_tokens"] = max(

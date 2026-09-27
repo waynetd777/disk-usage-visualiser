@@ -202,7 +202,8 @@ def _govern(h: "_common.HookCtx", command: str):
             original = govern.estimate_tokens(stdout)
             if original >= threshold:
                 ledger.record(h.ctx, h.session_id, "flood_passed", original,
-                              at_call=h.tool_call_index(), family=family)
+                              at_call=h.tool_call_index(), family=family,
+                              command=govern.command_label(command))
         return None, None
     original = govern.estimate_tokens(stdout)
     if original < threshold:
