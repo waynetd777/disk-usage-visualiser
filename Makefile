@@ -9,10 +9,8 @@ APP      := src-tauri/target/release/bundle/macos/Disk Usage.app
 export APPLE_SIGNING_IDENTITY
 SIGN_ID  := $(APPLE_SIGNING_IDENTITY)
 
-VERSION  := $(shell /usr/bin/plutil -extract version raw -o - src-tauri/tauri.conf.json)
-ZIP      := dist-release/Disk-Usage-$(VERSION)-arm64.zip
 
-.PHONY: check test app install-app release-zip dev icons screenshots sign-check
+.PHONY: check test app install-app dmg dev icons screenshots sign-check
 
 ## cargo test + TypeScript type-check.
 check:
@@ -43,13 +41,11 @@ install-app: app
 	@ditto "$(APP)" "/Applications/Disk Usage.app"
 	@echo "installed /Applications/Disk Usage.app"
 
-## Zip the signed .app for a GitHub release. ditto keeps the bundle's signature and symlinks
-## intact, which a plain `zip` does not.
-release-zip: app
-	@mkdir -p dist-release
-	@rm -f "$(ZIP)"
-	@ditto -c -k --sequesterRsrc --keepParent "$(APP)" "$(ZIP)"
-	@echo "$(ZIP) ($$(du -h "$(ZIP)" | cut -f1))"
+## Build the app and pack it into dist-release/Disk-Usage.dmg for a GitHub release, laid out
+## like other Mac installers (tools/dmg/). Finder lays out the window, so the first run asks to
+## let the terminal control Finder.
+dmg: app
+	@python3 tools/dmg/make_dmg.py
 
 ## Redraw design/icon.png and the tray template, then regenerate the Tauri icon set.
 icons:

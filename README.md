@@ -68,29 +68,23 @@ does not have Full Disk Access, a banner says so and opens System Settings.
 
 Apple Silicon Macs, macOS 13 or later. No need to clone anything.
 
-1. **Download** `Disk-Usage-1.2.0-arm64.zip` from the
-   [latest release](https://github.com/waynetd777/disk-usage-visualiser/releases/latest).
-2. **Unzip it** (double-click) and drag **Disk Usage.app** into your **Applications** folder.
-3. **Clear the download flag.** The app is signed with a self-signed certificate rather than an
-   Apple Developer ID, so macOS will refuse to open it until you do this once. In Terminal:
-
-   ```bash
-   xattr -dr com.apple.quarantine "/Applications/Disk Usage.app"
-   ```
-
-   Then open it normally. (Without this you get "Apple could not verify Disk Usage is free of
-   malware"; the command only removes the flag macOS puts on downloaded files.)
+1. **Download** [Disk-Usage.dmg](https://github.com/waynetd777/disk-usage-visualiser/releases/latest/download/Disk-Usage.dmg)
+   from the [latest release](https://github.com/waynetd777/disk-usage-visualiser/releases/latest).
+2. **Open it** and drag **Disk Usage** onto **Applications**.
+3. **Open Disk Usage** from Applications. macOS says it can't check the app for malicious
+   software, because it is signed with a self-signed certificate rather than an Apple Developer ID
+   and isn't notarised. Click **Done**, then open System Settings → Privacy & Security, scroll down
+   and click **Open Anyway** beside Disk Usage, then **Open Anyway** again and enter your password.
+   It opens normally after that.
 4. **Give it Full Disk Access** under System Settings → Privacy & Security → Full Disk Access, so
    it can see inside Mail, Safari, Photos and the other protected folders. Without it those folders
    are skipped and a banner in the app says so.
 
 Closing the window hides it; the app stays in the menu bar, and Quit is in that menu.
 
-If you have the GitHub CLI, steps 1–3 are:
+Instead of step 3 you can clear the download flag in Terminal, which is all Open Anyway does:
 
 ```bash
-gh release download --repo waynetd777/disk-usage-visualiser --pattern '*.zip' --dir ~/Downloads
-ditto -xk ~/Downloads/Disk-Usage-1.2.0-arm64.zip /Applications
 xattr -dr com.apple.quarantine "/Applications/Disk Usage.app"
 ```
 
@@ -108,7 +102,7 @@ make install-app      # signed build, copied to /Applications
 | Command | What it does |
 |---|---|
 | `make install-app` | Build the signed app and replace the copy in /Applications |
-| `make release-zip` | Build and zip the app as `dist-release/Disk-Usage-<version>-arm64.zip` |
+| `make dmg` | Build the app and pack it into the installer, `dist-release/Disk-Usage.dmg` |
 | `make check` | Rust tests and TypeScript type-check |
 | `make dev` | App with hot reload (shows as `DiskUsage` in the Dock; the bundle shows `Disk Usage`) |
 | `make icons` | Redraw the icon artwork (`tools/make_icons.py`) and regenerate the Tauri icon set |
@@ -120,8 +114,15 @@ make install-app      # signed build, copied to /Applications
 Full Disk Access granted again after every rebuild. Builds are signed with a self-signed
 certificate in the login keychain rather than an Apple Developer ID. Copy `signing.local.example`
 to `signing.local` (untracked) and name your own certificate there; `make app` refuses to build
-without it. That is why a downloaded copy needs the one-off `xattr -dr com.apple.quarantine`
-above; a build made on the signing machine runs without it.
+without it. That is why a downloaded copy needs Open Anyway (or `xattr -dr com.apple.quarantine`)
+once; a build made on the signing machine runs without it.
+
+**Releasing.** Bump the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and
+`package.json`, run `make dmg`, commit and push, then
+`gh release create v<version> dist-release/Disk-Usage.dmg`. The download link above points at the
+latest release's `Disk-Usage.dmg`, so keep that name. `tools/dmg/make_dmg.py` renders the window's
+background from `tools/dmg/background.html` with WebKit and has Finder lay out the icons, so the
+first run asks to let the terminal control Finder.
 
 **Build times.** `src-tauri/Cargo.toml` keeps the lib `rlib`-only and uses thin LTO with parallel
 codegen units, which takes an incremental build from minutes to about twenty seconds at the cost of
@@ -143,6 +144,7 @@ DU_TIMING=1 "/Applications/Disk Usage.app/Contents/MacOS/DiskUsage"
 | The treemap | `src/Treemap.tsx` |
 | The searchable file table | `src/FileTable.tsx` |
 | File metadata listing | `src-tauri/src/files.rs` |
+| Installer layout | `tools/dmg/` (`background.html` is the window's background) |
 | Icon artwork | `design/icon.png` and `src-tauri/icons/tray@2x.png`, drawn by `tools/make_icons.py` |
 
 ## Licence
