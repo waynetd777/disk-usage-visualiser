@@ -25,6 +25,7 @@ without a repo, a hook payload or a session.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from pathlib import Path
 from typing import Dict, NamedTuple, Optional
@@ -32,7 +33,6 @@ from typing import Dict, NamedTuple, Optional
 # Families, and what may be done to each. Only the three whose information is
 # structural -- and therefore recoverable from the log -- may be replaced.
 REPLACE_FAMILIES = ("grep_flood", "file_print", "git_show")
-SUGGEST_FAMILIES = ("test", "build", "unknown")
 
 DEFAULTS = {
     "advise": True,
@@ -50,16 +50,38 @@ _GREP_RE = re.compile(r"^(grep|egrep|fgrep|rg|ag|ack)\b")
 _PRINT_RE = re.compile(r"^(cat|head|tail|sed|nl|bat)\b")
 _GIT_SHOW_RE = re.compile(r"^git\s+(?:-[A-Za-z]\s+\S+\s+|-\S+\s+"
                           r"|--\S+(?:[= ]\S+)?\s+)*(show|diff|log)\b")
-_TEST_RE = re.compile(r"\b(pytest|unittest|vitest|jest|mocha|go\s+test|cargo\s+test"
-                      r"|npm\s+(?:run\s+)?test|yarn\s+test|tests?/run\.py)\b")
-_BUILD_RE = re.compile(r"\b(tsc|webpack|vite\s+build|rollup|cargo\s+build"
-                       r"|npm\s+run\s+build|yarn\s+build|docker\s+build|mvn|gradle)\b")
-# `make` is an ordinary English word as well as a command, so it only counts at
-# the head of one. As a bare `\bmake\b` in the group above, `grep -rn make src/`
-# classified as a build: the grep flood was never condensed, and the agent was
-# told build output can be very large.
-_MAKE_RE = re.compile(r"(?:^|[;&|\n]\s*)(?:\w+=\S*\s+)*make\b")
+# Test and build runners, matched at the head of a command -- after any
+# environment assignments and runner prefix (`python3 -m`, `uv run`, `npx`) --
+# never anywhere in it. Matched anywhere, `grep -rn pytest src/` and
+# `cat webpack.config.js` were test and build output, never condensed; `make`
+# was fixed for exactly this earlier, and the rest were missed.
+_TEST_RE = re.compile(r"^(?:pytest|py\.test|unittest|vitest|jest|mocha|rspec|phpunit|tox|nox"
+                      r"|go\s+test|cargo\s+test|dotnet\s+test|mix\s+test|swift\s+test"
+                      r"|(?:npm|yarn|pnpm|bun)\s+(?:run\s+)?test(?::\S*)?"
+                      r"|(?:\./)?gradlew?\s+(?:\S+\s+)*test|mvn\s+(?:\S+\s+)*test"
+                      r"|\S*tests?/run\.py)\b")
+_BUILD_RE = re.compile(r"^(?:tsc|webpack|rollup|esbuild|make|cmake|ninja|mvn|(?:\./)?gradlew?"
+                       r"|vite\s+build|next\s+build|cargo\s+build|go\s+build|dotnet\s+build"
+                       r"|(?:npm|yarn|pnpm|bun)\s+(?:run\s+)?build|docker\s+(?:compose\s+)?build"
+                       r"|swift\s+build|xcodebuild)\b")
 _ENV_PREFIX_RE = re.compile(r"^(?:\w+=\S*\s+)*")
+# What may run in front of the real command without changing what it is.
+_RUNNER_PREFIX_RE = re.compile(
+    r"^(?:(?:time|env|nice|command|exec|sudo)\s+"
+    r"|(?:python3?|py)(?:\.\d+)?\s+-m\s+|(?:python3?|node|bash|sh)(?:\.\d+)?\s+(?=\S)"
+    r"|(?:uv|poetry|pipenv|pdm|hatch)\s+run\s+|(?:npx|bunx|pnpx)\s+"
+    r"|(?:pnpm|yarn)\s+exec\s+)+")
+# Commands that print little and say nothing about the output of what they are
+# chained with; a chain of these and one condensable command is condensable.
+_QUIET = {"cd", "pushd", "popd", "echo", "printf", "pwd", "export", "set", "true",
+          "mkdir", "touch", ":", "source", ".", "clear"}
+# Listings whose lines are safe to cut to a head and tail when chained with a
+# file print: `ls -a; rg -n foo`.
+_INSPECT = {"ls", "find", "tree", "du", "stat", "file", "which", "wc"}
+# Stages that only filter what the head of a pipe printed.
+_FILTERS = {"grep", "egrep", "fgrep", "rg", "head", "tail", "sort", "uniq", "wc",
+            "cut", "awk", "sed", "tr", "jq", "column", "nl", "cat", "less", "more",
+            "tee", "fold", "fmt", "rev", "xargs"}
 
 
 class Condensed(NamedTuple):
@@ -115,15 +137,29 @@ def command_label(command: str) -> str:
         words = _ENV_PREFIX_RE.sub("", segment.strip(), count=1).split()
         if not words or words[0] == "cd":
             continue
-        head = words[0].rsplit("/", 1)[-1]
+        head = re.split(r"[\\/]", words[0])[-1]
         if head in _RUNNERS:
+            if len(words) > 1 and words[1] in ("-c", "-e", "--eval"):
+                # Inline code, not a script: its text is no name for it.
+                return "{} {}".format(head, words[1])
             rest = [w for w in words[1:] if not w.startswith("-")]
             if rest[:1] == ["run"] and len(rest) > 1:
                 rest = rest[1:]
             if rest:
-                return "%s %s" % (head, rest[0].rsplit("/", 1)[-1][:40])
+                return "%s %s" % (head, re.split(r"[\\/]", rest[0])[-1][:40])
         return head[:40]
     return "?"
+
+
+def _head(segment: str) -> str:
+    """A segment with its environment assignments and runner prefix removed."""
+    head = _ENV_PREFIX_RE.sub("", segment.strip(), count=1).lstrip()
+    return _RUNNER_PREFIX_RE.sub("", head, count=1)
+
+
+def _first_word(segment: str) -> str:
+    words = _ENV_PREFIX_RE.sub("", segment.strip(), count=1).split()
+    return words[0].rsplit("/", 1)[-1] if words else ""
 
 
 def classify(command: str) -> str:
@@ -146,20 +182,38 @@ def classify(command: str) -> str:
     cmd = command.strip()
     if not cmd:
         return "unknown"
-    if _TEST_RE.search(cmd):
-        return "test"
-    if _BUILD_RE.search(cmd) or _MAKE_RE.search(cmd):
-        return "build"
     segments = [seg for seg in _SEGMENT_RE.split(cmd) if seg.strip()]
-    if len(segments) <= 1:
-        return _classify_one(cmd)
-    families = [_classify_one(seg) for seg in segments]
-    replaceable = {f for f in families if f in REPLACE_FAMILIES}
-    if not replaceable:
+    stages = [st for seg in segments for st in seg.split("|") if st.strip()]
+    heads = [_head(st) for st in stages]
+    if any(_TEST_RE.match(h) for h in heads):
+        return "test"
+    if any(_BUILD_RE.match(h) for h in heads):
+        return "build"
+    families = []
+    for seg in segments:
+        parts = [p for p in seg.split("|") if p.strip()]
+        family = _classify_one(parts[0]) if parts else "unknown"
+        # A pipe into a program, not a filter, is that program's output:
+        # `cat f | python3 check.py` prints what the script prints.
+        if any(_first_word(p) not in _FILTERS for p in parts[1:]):
+            family = "unknown"
+        if family == "unknown" and _first_word(seg) in _QUIET:
+            continue
+        if family == "unknown" and len(segments) > 1 and _first_word(seg) in _INSPECT:
+            # Listings, not results: cut with the rest, as before.
+            family = "file_print"
+        families.append(family)
+    if not families:
         return "unknown"
-    if len(replaceable) == 1 and len(set(families)) == 1:
+    if len(set(families)) == 1:
         return families[0]
-    return "file_print"
+    # Mixed. Only condensable parts, of different kinds: head and tail lines
+    # are the one treatment honest about interleaved output. Anything else in
+    # the chain -- a test runner the patterns do not know, a script -- may be
+    # what printed the lines that matter, so it is left whole.
+    if all(f in REPLACE_FAMILIES for f in families):
+        return "file_print"
+    return "unknown"
 
 
 def prune(cache_dir: Path, budget_bytes: int, keep: Optional[Path] = None) -> int:
@@ -221,6 +275,10 @@ def preserve(cache_dir: Path, stdout: str, max_bytes: int,
         path = cache_dir / name
         if not path.exists():
             path.write_bytes(raw)
+        else:
+            # Newest again, or the prune below could delete the very log the
+            # model is about to be pointed at, as the oldest in the cache.
+            os.utime(str(path), None)
         if budget_bytes:
             prune(cache_dir, int(budget_bytes), keep=path)
         return str(path) if path.is_file() else None
@@ -288,6 +346,12 @@ def _condense_git_show(stdout: str, head: int, tail: int) -> str:
             current = line[len("diff --git "):]
             hunk_lines = 0
             continue
+        if in_diff and line.startswith("commit ") and re.match(r"^commit [0-9a-f]{7,}", line):
+            # The next commit of a `git log -p`: its header and message are
+            # not diff lines of the file before it.
+            flush()
+            in_diff = False
+            current, hunk_lines = "", 0
         if not in_diff:
             out.append(line)
             continue

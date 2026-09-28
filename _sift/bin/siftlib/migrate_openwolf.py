@@ -1,4 +1,4 @@
-"""`sift init --migrate-openwolf` / `sift import --from-openwolf` (BUILD-SPEC 15.2).
+"""`sift import` / `sift init --migrate-openwolf` (BUILD-SPEC 15.2).
 
 Imports what OpenWolf knew, removes its hooks, and shows you the diffs for the
 prose changes. It never deletes `.wolf/`: removing a knowledge base is the
@@ -264,7 +264,12 @@ class Migration:
             # included a vault note whose filename named a person and a
             # compensation change. The journal is committed; this is the last
             # point at which that can be stopped.
-            lint_mod._secret_scan(problems, "buglog", [line], lambda code: True)
+            # Scanned decoded, as lint scans a committed JSONL line, so a path
+            # on the second line of an error string is seen (D-20260915-06).
+            want = lambda code: True  # noqa: E731
+            lint_mod._secret_scan(problems, "buglog",
+                                  lint_mod._jsonl_lines(problems, "buglog", [line], want),
+                                  want)
             (quarantine if problems else entries).append(entry)
         self.data["bugs"] = {"imported": len(entries), "quarantined": len(quarantine)}
         self.log.append("buglog.json: {} entries imported, {} quarantined "

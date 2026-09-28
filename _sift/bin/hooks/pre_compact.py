@@ -24,7 +24,7 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     state = session_mod.load(h.ctx, h.session_id)
     state["precompact_trigger"] = str(h.payload.get("trigger") or "")
     state["precompact_at"] = util.now_iso()
-    util.write_json(h.ctx.precompact / (h.session_id + ".json"), state)
+    util.write_json(h.ctx.precompact / (session_mod.safe_name(h.session_id) + ".json"), state)
     session_mod.save(h.ctx, state)
     return None
 

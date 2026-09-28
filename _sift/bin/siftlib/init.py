@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -16,7 +17,7 @@ from .config import Config
 from .paths import Ctx
 
 
-def scaffold(ctx: Ctx, cfg: Config, githooks: bool = True, skills: bool = True,
+def scaffold(ctx: Ctx, cfg: Config, githooks: bool = True,
              force: bool = False, advisory: bool = True) -> Dict[str, Any]:
     troot = templates.templates_root()
     result: Dict[str, Any] = {"created": [], "merged": [], "skipped": [],
@@ -55,8 +56,6 @@ def scaffold(ctx: Ctx, cfg: Config, githooks: bool = True, skills: bool = True,
             result["created"].append(ctx.rel(target))
 
     for source, dest_tpl, mode in templates.MANIFEST:
-        if not skills and "/skills/" in dest_tpl:
-            continue
         src = troot / source
         if not src.is_file():
             continue
@@ -154,12 +153,43 @@ def install_githooks(ctx: Ctx, troot: Path, subs: Dict[str, str]) -> Dict[str, A
             util.atomic_write(dest, text)
         _chmod_x(dest)
     existing = gitutil.config_get(ctx.root, "core.hooksPath")
-    if not existing and hooks_dir.is_dir():
+    active = _active_git_hooks(ctx.root) if not existing else []
+    if not existing and hooks_dir.is_dir() and not active:
         gitutil.config_set(ctx.root, "core.hooksPath", ".githooks")
         out["hooks_path_set"] = True
+    elif active:
+        # Pointing core.hooksPath at .githooks would switch these off without
+        # a word -- a pre-commit framework or a secret scanner stops running.
+        out["hooks_path_blocked"] = active
+        sys.stderr.write(
+            "warning: .git/hooks has active hooks ({}); core.hooksPath was left "
+            "unset so they keep running, which means sift's pre-commit check "
+            "does not run. Move them into .githooks/ (sift will call each one "
+            "first) and run: git config core.hooksPath .githooks\n".format(
+                ", ".join(active)))
     elif existing and existing != ".githooks":
         out["hooks_path_other"] = existing
+        sys.stderr.write(
+            "warning: core.hooksPath is {}, so the hooks sift wrote to .githooks/ "
+            "do not run. Call .githooks/pre-commit from your own hook to keep "
+            "sift's privacy check.\n".format(existing))
     return out
+
+
+def _active_git_hooks(root: Path) -> List[str]:
+    """Hooks in the default hooks directory that git would run -- anything
+    there that is not one of git's own `.sample` files."""
+    proc = gitutil.run(root, ["rev-parse", "--git-path", "hooks"])
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return []
+    folder = Path(proc.stdout.strip())
+    if not folder.is_absolute():
+        folder = root / folder
+    if not folder.is_dir():
+        return []
+    return sorted(p.name for p in folder.iterdir()
+                  if p.is_file() and not p.name.endswith(".sample")
+                  and os.access(str(p), os.X_OK))
 
 
 def _chmod_x(path: Path) -> None:

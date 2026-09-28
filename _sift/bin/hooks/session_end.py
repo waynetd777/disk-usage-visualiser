@@ -25,8 +25,12 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
         # The counts are the whole session; the file list is only what lives in
         # this repo. A read outside the root keeps its absolute path, and this
         # line is committed -- see `Ctx.contains`.
+        # Tracked files only: a gitignored or untracked name (`.env.production`,
+        # a private note) would otherwise be published by this very line.
+        from siftlib import gitutil
+        tracked = set(gitutil.ls_files(h.ctx.root))
         inside = sorted({p for p in list(reads.keys()) + list(edits)
-                         if h.ctx.contains(p)})
+                         if h.ctx.contains(p) and p in tracked})
         journal.append(h.ctx, "session", "{} reads, {} edits".format(
             len(reads), len(edits)), files=inside[:50])
 

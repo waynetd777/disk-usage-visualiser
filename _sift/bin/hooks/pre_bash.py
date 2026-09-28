@@ -17,8 +17,8 @@ happens in `post_bash`, on the real output, where the harness's documented
 post-tool replacement shape changes what the model sees without touching the
 permission gate.
 
-The commit nudge that used to live here went with the pages in
-There is nothing left for a commit to have made stale.
+The commit nudge that used to live here went with the pages
+(D-20260915-01): there is nothing left for a commit to have made stale.
 """
 from __future__ import annotations
 

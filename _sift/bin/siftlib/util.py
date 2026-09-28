@@ -13,7 +13,7 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Iterable, List, Optional
 
 # Extensions whose content is denser than prose; see BUILD-SPEC 17.1.
 CODE_EXTENSIONS = {
@@ -21,13 +21,6 @@ CODE_EXTENSIONS = {
     ".kt", ".cs", ".rb", ".php", ".swift", ".c", ".h", ".cpp", ".hpp", ".sh",
     ".sql", ".tf", ".yaml", ".yml", ".json", ".toml",
 }
-
-FRONTMATTER_KEY_ORDER = ["id", "title", "kind", "covers", "commit", "verified", "links", "tags"]
-# Only `covers` is written as a block list; the rest stay on one line so a
-# union merge of an index or a one-line edit never straddles keys.
-BLOCK_LIST_KEYS = {"covers"}
-
-_FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---[ \t]*\r?\n?", re.DOTALL)
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +90,19 @@ def append_line(path: Path, line: str) -> bool:
         sys.stderr.write("warning: readonly\n")
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
+    # A file whose last line has no newline -- edited by hand or in a web UI --
+    # would have this record glued onto it, and the reader drops both.
+    lead = ""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            if fh.tell():
+                fh.seek(-1, os.SEEK_END)
+                lead = "" if fh.read(1) == b"\n" else "\n"
+    except OSError:
+        pass
     with open(path, "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(line.rstrip("\n") + "\n")
+        fh.write(lead + line.rstrip("\n") + "\n")
     return True
 
 
@@ -110,7 +114,10 @@ def read_jsonl(path: Path) -> List[dict]:
     out: List[dict] = []
     if not path.exists():
         return out
-    for line in read_text(path).splitlines():
+    # "\n" only: `splitlines` also breaks on U+2028/U+2029/U+0085, which a
+    # record can hold raw (pasted text, written with ensure_ascii=False), and
+    # the halves of such a record parse as nothing.
+    for line in read_text(path).split("\n"):
         line = line.strip()
         if not line or line.startswith("//"):
             continue
@@ -158,144 +165,10 @@ def estimate_tokens_for_chars(chars: int, ext: str = "") -> int:
 # Frontmatter - a YAML subset: scalars, flow lists, block lists. No PyYAML.
 # ---------------------------------------------------------------------------
 
-def _scalar(raw: str) -> Any:
-    raw = raw.strip()
-    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
-        return raw[1:-1]
-    return raw
-
-
-def _flow_list(raw: str) -> List[str]:
-    inner = raw.strip()[1:-1].strip()
-    if not inner:
-        return []
-    return [_scalar(p) for p in inner.split(",") if p.strip()]
-
-
-def parse_frontmatter(text: str) -> Tuple[Dict[str, Any], str]:
-    """Return (frontmatter dict, body). Missing/malformed frontmatter -> ({}, text)."""
-    m = _FRONTMATTER_RE.match(text)
-    if not m:
-        return {}, text
-    block = m.group(1)
-    body = text[m.end():]
-    data: Dict[str, Any] = {}
-    lines = block.splitlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if not line.strip() or line.lstrip().startswith("#"):
-            i += 1
-            continue
-        if line[:1].isspace() or line.lstrip().startswith("- "):
-            i += 1  # orphan continuation; the key that owned it consumed what it wanted
-            continue
-        key, sep, rest = line.partition(":")
-        if not sep:
-            i += 1
-            continue
-        key = key.strip()
-        rest = rest.strip()
-        if rest.startswith("[") and rest.endswith("]"):
-            data[key] = _flow_list(rest)
-            i += 1
-            continue
-        if rest == "":
-            items: List[str] = []
-            j = i + 1
-            while j < len(lines):
-                nxt = lines[j]
-                if nxt.strip().startswith("- ") and nxt[:1].isspace() or nxt.startswith("- "):
-                    items.append(_scalar(nxt.strip()[2:]))
-                    j += 1
-                elif not nxt.strip():
-                    j += 1
-                else:
-                    break
-            if items:
-                data[key] = items
-                i = j
-                continue
-            data[key] = ""
-            i += 1
-            continue
-        data[key] = _scalar(rest)
-        i += 1
-    return data, body
-
-
-def _needs_quotes(value: str) -> bool:
-    if value == "":
-        return True
-    if value[0] in "[]{}&*#?|-<>=!%@`'\"" or value[-1] in " \t":
-        return True
-    return ":" in value and ": " in value
-
-
-def _emit_scalar(value: Any) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if value is None:
-        return ""
-    s = str(value)
-    if _needs_quotes(s):
-        return '"' + s.replace('"', '\\"') + '"'
-    return s
-
-
-def dump_frontmatter(data: Dict[str, Any]) -> str:
-    """Serialise in the fixed key order (BUILD-SPEC 7.1); unknown keys keep
-    their relative order after the known ones."""
-    keys = [k for k in FRONTMATTER_KEY_ORDER if k in data]
-    keys += [k for k in data if k not in FRONTMATTER_KEY_ORDER]
-    out = ["---"]
-    for key in keys:
-        value = data[key]
-        if isinstance(value, (list, tuple)):
-            if key in BLOCK_LIST_KEYS:
-                out.append(f"{key}:")
-                for item in value:
-                    out.append(f"  - {_emit_scalar(item)}")
-                if not value:
-                    out[-1] = f"{key}: []"
-            else:
-                out.append(f"{key}: [" + ", ".join(_emit_scalar(v) for v in value) + "]")
-        else:
-            out.append(f"{key}: {_emit_scalar(value)}")
-    out.append("---")
-    return "\n".join(out) + "\n"
-
-
-def render_page(frontmatter: Dict[str, Any], body: str) -> str:
-    body = body if body.startswith("\n") else "\n" + body
-    return dump_frontmatter(frontmatter) + body
-
 
 # ---------------------------------------------------------------------------
 # Markdown sections
 # ---------------------------------------------------------------------------
-
-def split_sections(body: str) -> "List[Tuple[str, str]]":
-    """Split a page body into [(h2 title, section text)] in document order."""
-    out: List[Tuple[str, str]] = []
-    current: Optional[str] = None
-    buf: List[str] = []
-    in_fence = False
-    for line in body.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_fence = not in_fence
-        if not in_fence and line.startswith("## "):
-            if current is not None:
-                out.append((current, "\n".join(buf).strip("\n")))
-            current = line[3:].strip()
-            buf = []
-            continue
-        if current is not None:
-            buf.append(line)
-    if current is not None:
-        out.append((current, "\n".join(buf).strip("\n")))
-    return out
 
 
 def first_sentence(text: str) -> str:

@@ -72,10 +72,6 @@ class Ctx:
 
 
     @property
-    def search_json(self) -> Path:
-        return self.cache / "search.json"
-
-    @property
     def ledger(self) -> Path:
         return self.cache / "ledger.jsonl"
 

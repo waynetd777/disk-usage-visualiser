@@ -78,16 +78,23 @@ def _files_for(session: str) -> List[Path]:
     return _CACHE[key].get(session, [])
 
 
-def usage(sessions: Iterable[str], cutoff: Optional[str] = None) -> Dict[str, int]:
+def usage(sessions: Iterable[str], cutoff: Optional[str] = None,
+          until: Optional[str] = None) -> Dict[str, int]:
     """{sessions, sessions_found, context_in, context_resent, output_tokens}.
 
     context_in is new tokens written to context (uncached input plus cache
     writes): what sift's saving is a share of. context_resent is cache reads,
-    the conversation re-sent on each turn."""
+    the conversation re-sent on each turn. `until` stops at a moment inside
+    a session -- what a bug cost to fix is its session up to the `bug add`."""
     total: Dict = {"sessions": 0, "sessions_found": 0}
     total.update({f: 0 for f in FIELDS + PRICED})
     total.update({f: 0.0 for f in COSTS})
     total["by_model_usd"] = {}
+    # Which sessions had a log, and which had any priced request: the caller
+    # matches savings to these, so a saving is never set against usage that
+    # does not include its session.
+    total["found"] = []
+    total["priced"] = []
     seen: set = set()
     for session in sorted(set(sessions)):
         total["sessions"] += 1
@@ -95,11 +102,15 @@ def usage(sessions: Iterable[str], cutoff: Optional[str] = None) -> Dict[str, in
         if not files:
             continue
         total["sessions_found"] += 1
+        total["found"].append(session)
+        before = total["context_in_priced"] + total["context_resent_priced"]
         for path in files:
             if path.name.startswith("rollout-"):
-                _read_codex(path, cutoff, total)
+                _read_codex(path, cutoff, total, until)
             else:
-                _read_claude(path, cutoff, total, seen)
+                _read_claude(path, cutoff, total, seen, until)
+        if total["context_in_priced"] + total["context_resent_priced"] > before:
+            total["priced"].append(session)
     return total
 
 
@@ -150,7 +161,8 @@ def _lines(path: Path) -> Iterable[dict]:
                 yield row
 
 
-def _read_claude(path: Path, cutoff: Optional[str], total: Dict, seen: set) -> None:
+def _read_claude(path: Path, cutoff: Optional[str], total: Dict, seen: set,
+                 until: Optional[str] = None) -> None:
     for row in _lines(path):
         message = row.get("message")
         if not isinstance(message, dict):
@@ -159,13 +171,14 @@ def _read_claude(path: Path, cutoff: Optional[str], total: Dict, seen: set) -> N
         mid = message.get("id")
         if not isinstance(u, dict) or not mid or mid in seen:
             continue
-        if cutoff and str(row.get("timestamp", "")) < cutoff:
+        if not _inside(str(row.get("timestamp", "")), cutoff, until):
             continue
         seen.add(mid)
         _add(total, message.get("model"), u)
 
 
-def _read_codex(path: Path, cutoff: Optional[str], total: Dict) -> None:
+def _read_codex(path: Path, cutoff: Optional[str], total: Dict,
+                until: Optional[str] = None) -> None:
     model = None
     last_total = None
     for row in _lines(path):
@@ -181,10 +194,12 @@ def _read_codex(path: Path, cutoff: Optional[str], total: Dict) -> None:
         if not isinstance(info, dict):
             continue
         running = (info.get("total_token_usage") or {}).get("total_tokens")
-        if running == last_total:
+        # Codex repeats its last token_count; a running total that has not
+        # moved is that repeat. No total at all is not a repeat.
+        if running is not None and running == last_total:
             continue
         last_total = running
-        if cutoff and str(row.get("timestamp", "")) < cutoff:
+        if not _inside(str(row.get("timestamp", "")), cutoff, until):
             continue
         u = info.get("last_token_usage") or {}
         cached = int(u.get("cached_input_tokens") or 0)
@@ -192,3 +207,60 @@ def _read_codex(path: Path, cutoff: Optional[str], total: Dict) -> None:
             "input_tokens": max(0, int(u.get("input_tokens") or 0) - cached),
             "cache_read_input_tokens": cached,
             "output_tokens": int(u.get("output_tokens") or 0)})
+
+
+def _inside(ts: str, cutoff: Optional[str], until: Optional[str]) -> bool:
+    # Compared on the seconds only: transcripts carry milliseconds and the
+    # ledger does not, and "12:00:00.5Z" sorts before "12:00:00Z" as text.
+    ts = ts[:19]
+    if cutoff and ts < cutoff[:19]:
+        return False
+    return not (until and ts > until[:19])
+
+
+def session_at(root: Path, ts: str) -> Optional[str]:
+    """The Claude Code session of this repo that was running at `ts`, found by
+    the span of each transcript -- for a bug recorded before `bug add` noted
+    its session. None when no transcript of this repo covers the moment."""
+    env = os.environ.get("SIFT_TRANSCRIPTS")
+    base = Path(env).expanduser() if env else hookcheck.TRANSCRIPTS
+    folder = base / hookcheck.project_dir_name(root)
+    if not folder.is_dir() or not ts:
+        return None
+    moment = ts[:19]
+    for path in sorted(folder.glob("*.jsonl")):
+        first, last = _span(path)
+        if first and first[:19] <= moment <= last[:19]:
+            return path.stem
+    return None
+
+
+_SPANS: Dict[str, tuple] = {}
+
+
+def _span(path: Path) -> tuple:
+    """(first, last) timestamp of a transcript, read once per process per
+    file version: `session_at` asks for every old bug, and `--all` per repo."""
+    try:
+        stamp = path.stat().st_mtime
+    except OSError:
+        return "", ""
+    key = str(path)
+    cached = _SPANS.get(key)
+    if cached and cached[0] == stamp:
+        return cached[1], cached[2]
+    first = last = ""
+    try:
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                m = _TS.search(line)
+                if m:
+                    first = first or m.group(1)
+                    last = m.group(1)
+    except OSError:
+        pass
+    _SPANS[key] = (stamp, first, last)
+    return first, last
+
+
+_TS = re.compile(r'"timestamp":\s*"([^"]+)"')

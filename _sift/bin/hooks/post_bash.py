@@ -35,8 +35,11 @@ import _common
 
 def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     command = str(h.tool_input().get("command") or "")
-    note = _track_read(h, command)
+    # Condensing first: a `cat` whose output was cut to its head and tail was
+    # recorded as printed in full, and the next Read of the file was then told
+    # it was already in context.
     governed, flood = _govern(h, command)
+    note = _track_read(h, command, condensed=bool(governed))
     # The flood note is two strings, not one: the model is asked to raise the
     # setting, and the person is told in a line of their own. Everything else
     # this hook says is for the model alone.
@@ -64,7 +67,8 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     return None
 
 
-def _track_read(h: "_common.HookCtx", command: str) -> Optional[str]:
+def _track_read(h: "_common.HookCtx", command: str,
+                condensed: bool = False) -> Optional[str]:
     """Register a Bash file read, and say so if the content is already here.
 
     A note rather than a block: the output exists by the time this runs, so
@@ -73,9 +77,13 @@ def _track_read(h: "_common.HookCtx", command: str) -> Optional[str]:
     """
     from siftlib import bashread, gitutil, session as session_mod
 
+    if h.subagent:
+        # The parent's history is the parent's context; see post_read.
+        return None
     read = bashread.parse(command)
     if read is None:
         return None
+    full = read.full and not condensed
     response = h.payload.get("tool_response")
     stdout = _stdout(response)
     if not isinstance(stdout, str) or not stdout:
@@ -84,7 +92,11 @@ def _track_read(h: "_common.HookCtx", command: str) -> Optional[str]:
     try:
         target = Path(read.path)
         if not target.is_absolute():
-            target = h.ctx.root / target
+            # Against the directory the command ran in, which is not always
+            # the root: `cat README.md` in `sub/` is `sub/README.md`.
+            cwd = h.payload.get("cwd")
+            base = Path(cwd) if isinstance(cwd, str) and cwd else h.ctx.root
+            target = base / target
         target = target.resolve()
         rel = str(target.relative_to(h.ctx.root.resolve()))
     except (OSError, ValueError):
@@ -111,7 +123,7 @@ def _track_read(h: "_common.HookCtx", command: str) -> Optional[str]:
         # A window into a file is not the file: recording tokens for a ranged
         # read would let the next full read be refused as a duplicate of
         # something the model never saw whole.
-        if read.full:
+        if full:
             entry["tokens"] = tokens
             entry["ranged"] = False
             # Printed in full again, so the compaction that evicted it is spent
@@ -131,7 +143,7 @@ def _track_read(h: "_common.HookCtx", command: str) -> Optional[str]:
     # is a false statement about the conversation. This channel ignored the
     # flag entirely and made that claim after every compaction.
     unchanged = bool(seen) and seen.get("blob") == blob and blob
-    if (read.full and unchanged and not seen.get("ranged", True)
+    if (full and unchanged and not seen.get("ranged", True)
             and not seen.get("compacted")
             and int(seen.get("tokens", 0) or 0) > 0):
         return (_common.PREFIX + "{} was already printed in full this session "
@@ -202,7 +214,7 @@ def _govern(h: "_common.HookCtx", command: str):
             original = govern.estimate_tokens(stdout)
             if original >= threshold:
                 ledger.record(h.ctx, h.session_id, "flood_passed", original,
-                              at_call=h.tool_call_index(), family=family,
+                              at_call=h.carry_at(), family=family,
                               command=govern.command_label(command))
         return None, None
     original = govern.estimate_tokens(stdout)
@@ -215,7 +227,7 @@ def _govern(h: "_common.HookCtx", command: str):
     note = None
     if advise:
         ledger.record(h.ctx, h.session_id, "flood_seen", original,
-                      at_call=h.tool_call_index(),
+                      at_call=h.carry_at(),
                       family=family, condensed=bool(enabled))
         if not enabled:
             note = _flood_note(h, session_mod, original)
@@ -234,7 +246,7 @@ def _govern(h: "_common.HookCtx", command: str):
 
     ledger.record(h.ctx, h.session_id, "governed",
                   result.original_tokens - result.entered_tokens,
-                  at_call=h.tool_call_index(),
+                  at_call=h.carry_at(),
                   family=result.family, original_tokens=result.original_tokens,
                   entered_tokens=result.entered_tokens, preserved=bool(log))
     # Mirror the object; change stdout and nothing else.

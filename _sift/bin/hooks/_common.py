@@ -106,6 +106,35 @@ def is_whole_read(tool_input: Dict[str, Any], total_lines: Optional[int]) -> boo
     return limit >= total_lines
 
 
+def line_count(path: str, tool_input: Dict[str, Any]) -> Optional[int]:
+    """The file's line count, for `is_whole_read`, and only when it can matter:
+    a `limit` given with no offset past the first line. Counted in chunks and
+    stopped once past the limit, so a ranged read of a very large log -- the
+    read this tool recommends -- no longer loads the whole file, twice."""
+    limit = tool_input.get("limit")
+    if limit is None:
+        return None
+    try:
+        offset = int(tool_input.get("offset") or 0)
+        stop = int(limit) + 1
+    except (TypeError, ValueError):
+        return None
+    if offset > 1:
+        return None
+    count, last = 0, b"\n"
+    try:
+        with open(path, "rb") as fh:
+            while count <= stop:
+                chunk = fh.read(1 << 16)
+                if not chunk:
+                    break
+                count += chunk.count(b"\n")
+                last = chunk[-1:]
+    except OSError:
+        return None
+    return count + (0 if last == b"\n" else 1)
+
+
 def is_subagent(payload: Dict[str, Any]) -> bool:
     return bool(str(payload.get("agent_id") or "").strip()
                 or str(payload.get("agent_type") or "").strip())
@@ -153,6 +182,14 @@ class HookCtx:
                 "tool_calls", 0) or 0)
         except Exception:  # noqa: BLE001
             return 0
+
+    def carry_at(self) -> Optional[int]:
+        """The position a ledger row is carried from: its tool call in the
+        session, or None for a subagent. A subagent's calls are not counted in
+        the parent's `tool_calls`, and what enters a subagent's context lives
+        only as long as the subagent, so weighting it by every later turn of
+        the parent credited (and charged) re-sends that never happened."""
+        return None if self.subagent else self.tool_call_index()
 
     def rel(self, file_path: str) -> str:
         if not file_path:

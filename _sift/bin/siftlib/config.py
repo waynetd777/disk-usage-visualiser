@@ -38,10 +38,6 @@ DEFAULTS: Dict[str, Any] = {
         "grep_per_file": 3,
         "abandon_ratio": 0.7,
     },
-    "store": {
-        "total_token_budget": 60000,
-        "sentence_per_line": True,
-    },
     "scan": {
         "symbol_min_tokens": 500,
         "symbol_max_count": 30,
@@ -91,7 +87,6 @@ DEFAULTS: Dict[str, Any] = {
     # machine, if there is one, once per session. No network, and nothing acts
     # on the answer by itself -- it is a sentence, not an upgrade.
     "setup": {"describe_top": 25, "check_upgrade": True},
-    "lint": {"hard_fail": ["W15", "W16", "W19"], "stale_updated_days": 30},
     "ci": {"advisory": True},
 }
 
@@ -140,6 +135,14 @@ def load(path: Path) -> Config:
     return Config(_merge(DEFAULTS, raw))
 
 
+# Sections nothing reads any more. Older installs still have them in their
+# config.json; they are ignored rather than reported, so an upgrade does not
+# turn every repo's `doctor` red. `store` held the page-era token budget and
+# sentence rule; `lint.hard_fail` never controlled anything -- the blocking
+# codes are the pre-commit hook's own.
+RETIRED = {"store", "lint"}
+
+
 def validate(path: Path) -> Tuple[List[str], List[str]]:
     """Return (unknown key paths, invalid value messages)."""
     raw = util.read_json(path, default={})
@@ -157,17 +160,12 @@ def validate(path: Path) -> Tuple[List[str], List[str]]:
             if isinstance(value, dict) and isinstance(ref[key], dict):
                 walk(value, ref[key], here + ".")
 
-    walk(raw, DEFAULTS, "")
+    walk({k: v for k, v in raw.items() if k not in RETIRED}, DEFAULTS, "")
     for (section, key), allowed in ENUMS.items():
         value = raw.get(section, {}).get(key) if isinstance(raw.get(section), dict) else None
         if value is not None and value not in allowed:
             invalid.append("{}.{} must be one of {}".format(section, key, ", ".join(sorted(allowed))))
     return unknown, invalid
-
-
-def default_json() -> str:
-    import json
-    return json.dumps(DEFAULTS, indent=2, ensure_ascii=False) + "\n"
 
 
 def lookup_default(dotted: str) -> Tuple[Any, Any]:
@@ -223,6 +221,9 @@ def set_value(path: Path, dotted: str, value: Any) -> Any:
     order, and return an error string or None. The caller has already checked
     the key is known and the value is the right type and an allowed enum."""
     import json
+    if path.exists() and not isinstance(util.read_json(path, default=None), dict):
+        # Rewriting it from {} would erase every other key in it.
+        return "config.json is not valid JSON; fix it by hand first"
     raw = util.read_json(path, default={})
     if not isinstance(raw, dict):
         raw = {}

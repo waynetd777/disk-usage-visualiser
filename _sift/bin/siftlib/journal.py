@@ -15,7 +15,6 @@ import re
 from typing import Any, Dict, List, Optional, Sequence
 
 from . import gitutil, util
-from .config import Config
 from .paths import Ctx
 
 KINDS = ("bug", "gotcha", "session", "ingest", "decision-ref", "migrate", "note")
@@ -52,11 +51,6 @@ def append(ctx: Ctx, kind: str, detail: str,
 
 def entries(ctx: Ctx) -> List[dict]:
     return util.read_jsonl(ctx.journal)
-
-
-def recent(ctx: Ctx, count: int = 3) -> List[dict]:
-    rows = sorted(entries(ctx), key=lambda r: str(r.get("ts", "")))
-    return rows[-count:][::-1]
 
 
 def add_bug(ctx: Ctx, error: str, root_cause: str, fix: str,

@@ -212,13 +212,6 @@ def upgrade_item(ctx: Ctx, cfg: Config,
     }
 
 
-def upgrade_lines(item: Optional[Dict[str, Any]]) -> List[str]:
-    """For a person, at the end of a command."""
-    if not item:
-        return []
-    return ["", "An upgrade is available: {}.".format(item["what"]), "  " + item["how"]]
-
-
 def upgrade_user_message(item: Optional[Dict[str, Any]]) -> str:
     if not item:
         return ""

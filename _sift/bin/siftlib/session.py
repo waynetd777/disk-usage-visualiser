@@ -30,9 +30,14 @@ def blank(session_id: str, source: str = "startup") -> Dict[str, Any]:
     }
 
 
+def safe_name(session_id: str) -> str:
+    """A session id made safe as a file name: no `/`, no `..`."""
+    return "".join(c if (c.isalnum() or c in "-_") else "_"
+                   for c in session_id)[:120] or "unknown"
+
+
 def path_for(ctx: Ctx, session_id: str) -> "Any":
-    safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in session_id)[:120] or "unknown"
-    return ctx.sessions / (safe + ".json")
+    return ctx.sessions / (safe_name(session_id) + ".json")
 
 
 def load(ctx: Ctx, session_id: str, source: str = "startup") -> Dict[str, Any]:

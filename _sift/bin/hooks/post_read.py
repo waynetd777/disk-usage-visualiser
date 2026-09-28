@@ -64,8 +64,13 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     # a "range" that returned the file is the file.
     whole_read = (_common.is_whole_read(h.tool_input(), _line_count(h, path, rel))
                   or (whole > 0 and tokens >= whole))
-    at_call = h.tool_call_index()
+    at_call = h.carry_at()
     credit = {"delta": 0, "record": False}
+    # The read is recorded here, after it happened, with the content it
+    # returned -- `pre_read` recording it beforehand left a failed read marked
+    # as in context.
+    from siftlib import gitutil
+    blob = gitutil.short_blob(gitutil.hash_object(h.ctx.root, rel)) if whole_read else ""
 
     def change(state: Dict[str, Any]) -> None:
         entry = (state.get("files_read") or {}).get(rel) or {"count": 1}
@@ -85,6 +90,10 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
             # The measured size replaces the estimate. A whole read after the
             # windows were credited supersedes them: the file is in context
             # entire, so what they were credited with is taken back.
+            # A new entry starts at a count of 1; a known file adds this read.
+            if rel in (state.get("files_read") or {}):
+                entry["count"] = int(entry.get("count", 0) or 0) + 1
+            entry["blob"] = blob or entry.get("blob", "")
             entry["tokens"] = tokens
             entry["ranged"] = False
             entry["measured"] = True
@@ -105,7 +114,13 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
             credit["record"] = True
         state.setdefault("files_read", {})[rel] = entry
 
-    session_mod.mutate(h.ctx, h.session_id, change)
+    # A subagent's reads are its own context, not the parent's: recorded in
+    # the parent's history, they made the main agent's first read of a file
+    # "already read in this session". The ledger still counts them.
+    if not h.subagent:
+        session_mod.mutate(h.ctx, h.session_id, change)
+    else:
+        change({"files_read": {}})
 
     # What a ranged read saved, measured rather than assumed: the whole file
     # as the scan sized it, minus what the windows actually returned. This used
@@ -197,16 +212,8 @@ def strip_line_numbers(text: str) -> str:
 
 
 def _line_count(h: "_common.HookCtx", raw_path: str, rel: str) -> Optional[int]:
-    """The file's line count, for `is_whole_read`'s limit check; counted only
-    when a limit was given, so the ordinary read costs no extra disk access."""
-    if h.tool_input().get("limit") is None:
-        return None
-    try:
-        with open(str(_abs(h, raw_path)), "rb") as fh:
-            data = fh.read()
-    except OSError:
-        return None
-    return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+    """The file's line count, for `is_whole_read`'s limit check."""
+    return _common.line_count(str(_abs(h, raw_path)), h.tool_input())
 
 
 def extract(response: Any) -> Optional[str]:

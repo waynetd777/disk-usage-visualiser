@@ -31,7 +31,7 @@ if sys.version_info < (3, 9):
 from siftlib import (  # noqa: E402
     config as config_mod, doctor as doctor_mod,
     gitutil, init as init_mod, journal as journal_mod, ledger as ledger_mod,
-    prices as prices_mod,
+    hookcheck as hookcheck_mod, prices as prices_mod,
     lint as lint_mod, openwolf, paths, scan as scan_mod,
     search as search_mod, util,
 )
@@ -102,7 +102,8 @@ def build_parser() -> argparse.ArgumentParser:
             "sift init", "sift init --dry-run")
     s.add_argument("--migrate-openwolf", action="store_true")
     s.add_argument("--no-githooks", action="store_true")
-    s.add_argument("--no-skills", action="store_true")
+    # No skills ship any more; the flag is still accepted so scripts pass it.
+    s.add_argument("--no-skills", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--dir", default=None)
     confirmable(s, "scaffold without the interactive prompts")
     s.add_argument("--dry-run", action="store_true")
@@ -161,7 +162,9 @@ def build_parser() -> argparse.ArgumentParser:
             "sift lint", "sift lint --staged", "sift lint --all")
     s.add_argument("--staged", action="store_true")
     s.add_argument("--ci", action="store_true")
-    s.add_argument("--fast", action="store_true")
+    # No check reads git history any more, so there is nothing to skip; the
+    # flag is still accepted because older installed pre-commit hooks pass it.
+    s.add_argument("--fast", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--only", default=None)
     fleet(s, "lint every repo")
 
@@ -259,8 +262,14 @@ def build_parser() -> argparse.ArgumentParser:
         "      condenses (test, build, unclassifiable), with the commands that\n"
         "      printed the most. Shown beside saved, never subtracted from it.\n"
         "  knowledge  index hits and misses; calls to sift search, bug find\n"
-        "      and decisions and how many returned anything; commits the\n"
-        "      pre-commit lint blocked, by code. None of it is in a token figure.")
+        "      and decisions and how many returned anything. known bugs\n"
+        "      replayed: the bugs bug find returned, valued at what each fix\n"
+        "      cost the first time -- its session, start to bug add, once per\n"
+        "      bug (an upper bound; a bug older than its session logs is\n"
+        "      counted as predating them). commits blocked by lint: what the\n"
+        "      pre-commit lint stopped, by check -- home-directory paths (W16),\n"
+        "      secrets (W15), tracked local/ files (W19). None of it is added\n"
+        "      to saved.")
     s.add_argument("-v", "--verbose", action="store_true",
                    help="every breakdown, not just the headline")
     s.add_argument("--since", default="7.days",
@@ -356,7 +365,6 @@ class App:
         else:
             data = init_mod.scaffold(
                 self.ctx, self.cfg, githooks=not args.no_githooks,
-                skills=not args.no_skills,
                 advisory=bool(self.cfg.get("ci", "advisory", default=True)))
             if (HERE / "siftlib").is_dir() and not (self.ctx.dir / "bin" / "sift.py").exists():
                 data["bin"] = init_mod.install_bin(self.ctx, src_root)
@@ -749,10 +757,13 @@ class App:
         self.out.emit(shown)
         return EXIT_OK
 
-    def _consulted(self, command: str, hits: int) -> None:
-        """One consulting call, counted (D-20260922-03). The command and how
-        many rows came back; never the query, which is whatever was typed."""
-        ledger_mod.record(self.ctx, "cli", "consulted", command=command, hits=int(hits))
+    def _consulted(self, command: str, hits: int, ids: Sequence[str] = ()) -> None:
+        """One consulting call, counted (D-20260922-03). The command, how many
+        rows came back, and for bug find which bugs; never the query, which is
+        whatever was typed."""
+        extra = {"ids": list(ids)} if ids else {}
+        ledger_mod.record(self.ctx, "cli", "consulted", command=command,
+                          hits=int(hits), **extra)
 
     def cmd_search(self) -> int:
         rows = search_mod.search(self.ctx, self.cfg, self.args.query,
@@ -775,7 +786,7 @@ class App:
             self.out.fail("USAGE", "--root only means something with --all")
             return EXIT_USAGE
         only = set(c.strip().upper() for c in self.args.only.split(",")) if self.args.only else None
-        issues = lint_mod.run(self.ctx, self.cfg, fast=self.args.fast, only=only,
+        issues = lint_mod.run(self.ctx, self.cfg, only=only,
                               staged=self.args.staged)
         summary = lint_mod.summarise(issues)
         if not self.out.json_mode:
@@ -821,7 +832,7 @@ class App:
         repos: List[Dict[str, Any]] = []
         for rel, ctx in self._fleet_repos(root):
             cfg = config_mod.load(ctx.config_path)
-            issues = lint_mod.run(ctx, cfg, fast=self.args.fast, only=only,
+            issues = lint_mod.run(ctx, cfg, only=only,
                                   staged=self.args.staged)
             summary = lint_mod.summarise(issues)
             repos.append({"repo": rel, "errors": summary["errors"],
@@ -861,13 +872,23 @@ class App:
             entry = journal_mod.add_bug(self.ctx, self.args.error, self.args.root_cause,
                                         self.args.fix, files=self.args.files,
                                         tags=self.args.tags)
+            # Which session found the fix, so a later `bug find` hit can say
+            # what finding it cost: the harness's own session id when it sets
+            # one, else the newest session sift's hooks wrote, which with two
+            # sessions open in one repo can be the other one. The ledger is
+            # gitignored, so the session id stays on this machine.
+            session = (os.environ.get("CLAUDE_CODE_SESSION_ID")
+                       or os.environ.get("CODEX_SESSION_ID")
+                       or hookcheck_mod.last_recorded_session(self.ctx.dir) or "cli")
+            ledger_mod.record(self.ctx, session, "bug_added", bug=entry["id"])
             if not self.out.json_mode:
                 self.out.line("logged " + entry["id"])
             self.out.emit(entry)
             return EXIT_OK
         if self.args.bug_cmd == "find":
             rows = journal_mod.find_bugs(self.ctx, self.args.query, top=self.args.top)
-            self._consulted("bug_find", len(rows))
+            self._consulted("bug_find", len(rows),
+                            [str(r["id"]) for r in rows if r.get("id")])
             if not self.out.json_mode:
                 if not rows:
                     self.out.line("no known bug matches that")
@@ -1030,6 +1051,7 @@ class App:
         verbose = bool(getattr(self.args, "verbose", False))
         for r in summary["repos"]:
             r["money"] = self._ledger_money(r)
+            r["tokens_saved"], _, _, r["tokens_got_through"] = self._ledger_saved(r)
         total = summary["total"]
         total["tokens_saved"], _, _, total["tokens_got_through"] = \
             self._ledger_saved(total)
@@ -1132,12 +1154,20 @@ class App:
         def usd(tokens: int, rate: Optional[float]) -> Optional[float]:
             return None if rate is None else tokens * rate
 
+        # Percentages and dollars use only the savings of sessions whose usage
+        # was found (priced, for dollars): a saving from a session with no log
+        # set against usage that excludes it overstated the share.
+        matched_in = int(data.get("saved_in_matched", saved_in) or 0)
+        matched_cached = int(data.get("saved_cached_matched", saved_cached) or 0)
+        priced_in = int(data.get("saved_in_priced", 0) or 0)
+        priced_cached = int(data.get("saved_cached_priced", 0) or 0)
         return {
-            "saved_in": saved_in, "saved_in_usd": usd(saved_in, rate_in),
+            "saved_in": saved_in, "saved_in_usd": usd(priced_in, rate_in),
+            "saved_in_matched": matched_in, "saved_cached_matched": matched_cached,
             "used_in": int(data.get("context_in", 0) or 0),
             "used_in_usd": float(data.get("context_in_usd", 0) or 0) if in_priced else None,
             "saved_cached": saved_cached,
-            "saved_cached_usd": usd(saved_cached, rate_read),
+            "saved_cached_usd": usd(priced_cached, rate_read),
             "used_cached": int(data.get("context_resent", 0) or 0),
             "used_cached_usd": (float(data.get("context_resent_usd", 0) or 0)
                                 if read_priced else None),
@@ -1152,7 +1182,8 @@ class App:
     def _ledger_money_sum(items: List[dict]) -> dict:
         out: Dict[str, Any] = {}
         for key in ("saved_in", "used_in", "saved_cached", "used_cached",
-                    "big_in", "big_cached", "output"):
+                    "big_in", "big_cached", "output", "saved_in_matched",
+                    "saved_cached_matched"):
             out[key] = sum(int(m.get(key, 0) or 0) for m in items)
         for key in ("saved_in_usd", "used_in_usd", "saved_cached_usd",
                     "used_cached_usd", "big_usd", "output_usd"):
@@ -1175,11 +1206,11 @@ class App:
         sign = "-" if n < 0 else ""
         a = abs(n)
         if a < 1000:
-            return "{}~{}".format(sign, int(a))
+            return "~{}{}".format(sign, int(a))
         for unit, size in (("B", 1e9), ("M", 1e6), ("k", 1e3)):
             if a >= size:
                 v = a / size
-                return "{}~{}{}".format(sign, "{:.1f}".format(v) if v < 10 else
+                return "~{}{}{}".format(sign, "{:.1f}".format(v) if v < 10 else
                                         "{:,}".format(int(round(v))), unit)
         return str(int(n))
 
@@ -1187,7 +1218,7 @@ class App:
     def _usd(x: Optional[float]) -> str:
         if x is None:
             return ""
-        sign = "-" if x < 0 else ""
+        sign = "-" if x <= -0.005 else ""
         a = abs(x)
         return "{}${}".format(sign, "{:.2f}".format(a) if a < 100 else
                               "{:,}".format(int(round(a))))
@@ -1218,9 +1249,9 @@ class App:
                           "re-sent{}{} (approximate)".format(
                               self._window(since),
                               self._net(self._approx(money["saved_in"]), money["saved_in"]),
-                              share(money["saved_in"], money["used_in"]),
+                              share(money["saved_in_matched"], money["used_in"]),
                               self._approx(money["saved_cached"]),
-                              share(money["saved_cached"], money["used_cached"]),
+                              share(money["saved_cached_matched"], money["used_cached"]),
                               across))
             return
         saved = sum(v for v in saved_usd if v is not None)
@@ -1241,11 +1272,11 @@ class App:
             return [name,
                     self._cell(m["saved_in"], m["saved_in_usd"]),
                     self._cell(m["used_in"], m["used_in_usd"]) if m["used_in"] else "-",
-                    pct(m["saved_in"], m["used_in"]),
+                    pct(m["saved_in_matched"], m["used_in"]),
                     self._cell(m["saved_cached"], m["saved_cached_usd"]),
                     self._cell(m["used_cached"], m["used_cached_usd"])
                     if m["used_cached"] else "-",
-                    pct(m["saved_cached"], m["used_cached"])]
+                    pct(m["saved_cached_matched"], m["used_cached"])]
 
         body = [cells(name, m) for name, m in rows]
         foot = cells("total", total) if total is not None else None
@@ -1308,6 +1339,10 @@ class App:
                 self.out.line("  {:<24} {:>8}  {:>14}   {}".format(
                     label, self._approx(tokens),
                     "~" + self._usd(usd) if usd is not None else "-", note).rstrip())
+            unmatched = money["saved_in"] - money["saved_in_matched"]
+            if unmatched > 0:
+                self.out.line("  {} tokens saved in sessions with no usage log are left out "
+                              "of the percentages".format(self._approx(unmatched)))
             by_model = sorted((data.get("by_model_usd") or {}).items(), key=lambda kv: -kv[1])
             if by_model:
                 self.out.line("  by model: " + ", ".join(
@@ -1370,9 +1405,8 @@ class App:
         self.out.line("")
         self.out.line("knowledge:")
         warned = int(data.get("dup_warned", 0) or 0)
-        self.out.line("  index: {} hits, {} misses, {} nudges{}".format(
+        self.out.line("  index: {} hits, {} misses{}".format(
             util.num(data["index_hits"]), util.num(data["index_misses"]),
-            util.num(data["nudges"]),
             ", {} warned (read anyway, not credited)".format(
                 util.count(warned, "duplicate")) if warned else ""))
         # The knowledge artefacts, in the only terms they can be measured:
@@ -1389,12 +1423,41 @@ class App:
                 " ({} with hits)".format(util.num(int(c.get("hits", 0) or 0)))
                 if calls and key != "decisions" else ""))
         self.out.line("  consulted: " + ", ".join(parts))
+        replay = data.get("bug_replay") or {}
+        if replay.get("bugs"):
+            self.out.line("  known bugs replayed: {} on {}, whose fixes took up to {} "
+                          "tokens{} to find the first time".format(
+                              util.count(replay["hits"], "hit"),
+                              util.count(replay["bugs"], "bug"),
+                              self._approx(replay.get("tokens", 0)),
+                              " (~{})".format(self._usd(replay.get("usd")))
+                              if replay.get("usd_known") else ""))
+            self.out.line("    (upper bound: each fixing session up to its bug add{})".format(
+                "; {} predate {} session logs".format(
+                    util.count(replay["predate"], "bug"),
+                    "its" if replay["predate"] == 1 else "their")
+                if replay.get("predate") else ""))
+        if replay.get("hits_unnamed"):
+            self.out.line("  known bugs replayed: {} not attributable (recorded "
+                          "before bug find noted which bugs it returned)".format(
+                              util.count(replay["hits_unnamed"], "bug find hit")))
+        # Named by what each check stops rather than by code, and every check
+        # shown even at zero: nothing blocked for secrets is evidence too.
         blocked = int(data.get("lint_blocked", 0) or 0)
         codes = data.get("lint_blocked_codes") or {}
+        what = (("W16", "home-directory path", "home-directory paths"),
+                ("W15", "secret", "secrets"),
+                ("W19", "tracked local/ file", "tracked local/ files"))
+        stopped = ["{} {} ({})".format(util.num(int(codes.get(c, 0))),
+                                       one if int(codes.get(c, 0)) == 1 else many, c)
+                   for c, one, many in what if codes.get(c)]
+        clear = [many + " (" + c + ")" for c, one, many in what if not codes.get(c)]
         self.out.line("  commits blocked by lint: {}{}".format(
             util.num(blocked),
-            " ({})".format(", ".join("{} {}".format(k, v) for k, v in sorted(
-                codes.items(), key=lambda kv: -kv[1]))) if codes else ""))
+            ", which stopped {} from being published".format(", ".join(stopped))
+            if stopped else ""))
+        if clear:
+            self.out.line("    nothing was blocked for {}".format(" or ".join(clear)))
 
     def _ledger_help_hint(self, command: str = "sift ledger") -> None:
         self.out.line("")

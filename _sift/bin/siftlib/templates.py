@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -20,7 +21,6 @@ from . import util
 
 BEGIN = "<!-- sift:begin"
 END = "<!-- sift:end -->"
-STANZA_SENTINEL = "# sift:"
 
 # (source relative to templates/, dest relative to root - {dir} expanded, mode)
 # Every generated block says this in its opening marker, and every one behaves
@@ -205,8 +205,15 @@ def apply_merge_json_hooks(dest: Path, text: str, dir_name: str,
     current: Dict[str, Any] = {}
     if dest.exists():
         loaded = util.read_json(dest, default=None)
-        if isinstance(loaded, dict):
-            current = loaded
+        if not isinstance(loaded, dict):
+            # Unparseable (a trailing comma is enough) or not an object. It
+            # was rewritten as sift's hooks alone, erasing the permissions and
+            # settings in it; leave it for the person to fix instead.
+            sys.stderr.write("warning: {} is not valid JSON; left as it is, so "
+                             "sift's hooks are not installed in it. Fix it and "
+                             "re-run.\n".format(dest.name))
+            return "skipped"
+        current = loaded
     existed = dest.exists()
     hooks = current.get("hooks")
     if not isinstance(hooks, dict):

@@ -13,8 +13,7 @@ from . import paths, util
 from .paths import Ctx
 
 EVENTS = ("index_hit", "index_miss", "dup_warned", "dup_denied",
-          "ranged_steered", "nudge_commit", "nudge_stop", "injected",
-          "governed", "governed_rerun", "flood_seen",
+          "ranged_steered", "injected", "governed", "flood_seen",
           # A Bash flood of a family the governor never condenses -- test,
           # build, or an unclassifiable chain. It entered context whole; it is
           # counted so the passed-through volume can be told apart by family.
@@ -29,7 +28,10 @@ EVENTS = ("index_hit", "index_miss", "dup_warned", "dup_denied",
           # `bug find` or `decisions` call with how many rows it returned;
           # `lint_blocked` is a `lint --staged` run that found a hard-fail
           # code, which is the commit the pre-commit hook refuses.
-          "consulted", "lint_blocked")
+          "consulted", "lint_blocked",
+          # A `bug add`, with the session it ran in, so a later `bug find` hit
+          # on that bug can say what finding the fix cost (D-20260928-03).
+          "bug_added")
 
 CONSULT_COMMANDS = ("search", "bug_find", "decisions")
 
@@ -86,7 +88,11 @@ def _cutoff(since: str) -> Optional[str]:
     return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
+def summarise(ctx: Ctx, since: str = "7.days",
+              usage_exclude: Optional[set] = None) -> Dict[str, Any]:
+    """`usage_exclude`: sessions whose usage another repo's summary counts, so
+    `--all` counts a session that worked in two repos once (their savings
+    here still count, as savings without a usage log)."""
     cutoff = _cutoff(since)
     counts: Dict[str, int] = {e: 0 for e in EVENTS}
     # session -> (last tool call seen, [(at_call, tokens signed)])
@@ -120,8 +126,35 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
         c: {"calls": 0, "hits": 0} for c in CONSULT_COMMANDS}
     blocked_codes: Dict[str, int] = {}
     sessions: set = set()
+    # bug id -> the session that recorded it, from any time: a bug found this
+    # week may have been fixed months ago.
+    bug_sessions: Dict[str, str] = {}
+    bug_hits: Dict[str, int] = {}
+    bug_hits_unnamed = 0
+    # What sift saved, per session, so the percentages and dollars can be
+    # limited to the sessions whose usage is known -- a Codex session with no
+    # log, or a transcript cleaned up, has savings but nothing they are out of.
+    saved_by_session: Dict[str, int] = {}
+    # (session, path) -> [(ts, at_call, tokens)] for ranged rows, across the
+    # whole ledger. A file's rows only sum right as a set -- each is the
+    # change in the file's credit -- so a window cutting between them could
+    # keep a later -9000 without the +9000 before it. The set is counted in
+    # the window of its last row.
+    ranged_groups: Dict[tuple, List[tuple]] = {}
+    # (session, at_call) of each flood carried at its original size, so its
+    # condensation can take the cut back off the cost.
+    flood_at: set = set()
     for row in util.read_jsonl(ctx.ledger):
         ts = str(row.get("ts", ""))
+        if row.get("event") == "bug_added" and row.get("bug"):
+            bug_sessions[str(row["bug"])] = str(row.get("session", ""))
+        if row.get("event") == "ranged_steered" and "path" in row:
+            key = (str(row.get("session", "")), str(row.get("path", "")))
+            ranged_groups.setdefault(key, []).append(
+                (ts, row.get("at_call"), int(row.get("tokens", 0) or 0)))
+            if not (cutoff and ts < cutoff):
+                counts["ranged_steered"] += 1
+            continue
         if cutoff and ts < cutoff:
             continue
         sessions.add(str(row.get("session", "")))
@@ -132,11 +165,14 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
         # `dup_warned` is not here: in `warn` mode the read goes ahead, so a
         # warned duplicate is tokens that entered, not tokens kept out. It was
         # credited whole to avoided until 2026-09-22.
+        sess_id = str(row.get("session", ""))
         if event == "dup_denied":
             avoided += tokens
+            saved_by_session[sess_id] = saved_by_session.get(sess_id, 0) + tokens
         if event == "ranged_steered":
-            if "path" in row or "whole_tokens" not in row:
+            if "whole_tokens" not in row:
                 avoided += tokens
+                saved_by_session[sess_id] = saved_by_session.get(sess_id, 0) + tokens
             else:
                 key = (str(row.get("session", "")), int(row.get("whole_tokens", 0) or 0))
                 old_ranged.setdefault(key, []).append(
@@ -144,6 +180,7 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
                      int(row.get("read_tokens", 0) or 0)))
         if event == "injected":
             injected += tokens
+            saved_by_session[sess_id] = saved_by_session.get(sess_id, 0) - tokens
         if event == "read_flood":
             read_flood_tokens += tokens
         if event == "big_read_denied":
@@ -164,6 +201,12 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
                 consulted[command]["calls"] += 1
                 if int(row.get("hits", 0) or 0) > 0:
                     consulted[command]["hits"] += 1
+                    if command == "bug_find":
+                        ids = row.get("ids") or []
+                        if not ids:
+                            bug_hits_unnamed += 1
+                        for bug in ids:
+                            bug_hits[str(bug)] = bug_hits.get(str(bug), 0) + 1
         if event == "lint_blocked":
             for code, n in (row.get("codes") or {}).items():
                 blocked_codes[str(code)] = blocked_codes.get(str(code), 0) + int(n or 0)
@@ -176,6 +219,8 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
                 carried.append((sess, int(at), tokens, "cost"))
                 if event == "injected":
                     carried.append((sess, int(at), tokens, "injected"))
+                if event == "flood_seen":
+                    flood_at.add((sess, int(at)))
             elif event == "dup_denied" or (event == "ranged_steered" and "path" in row):
                 # A read kept out is kept out of every later turn too, the same
                 # as a condensed flood; only condensing was carried until
@@ -188,17 +233,62 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
                 saved = int(row.get("original_tokens", 0) or 0) - \
                     int(row.get("entered_tokens", 0) or 0)
                 carried.append((sess, int(at), saved, "saved"))
+                # What stayed in context is what entered. Its `flood_seen` row
+                # carried the flood at its original size, so the cut is taken
+                # back off; without that a condensed flood was carried twice,
+                # as cost at its full size and as saving for the part cut.
+                # With no `flood_seen` (advice off), the entered size is the
+                # cost on its own.
+                if (sess, int(at)) in flood_at:
+                    carried.append((sess, int(at), -saved, "cost"))
+                else:
+                    carried.append((sess, int(at),
+                                    int(row.get("entered_tokens", 0) or 0), "cost"))
         if event == "governed":
+            saved_by_session[sess_id] = saved_by_session.get(sess_id, 0) + max(
+                0, int(row.get("original_tokens", 0) or 0)
+                - int(row.get("entered_tokens", 0) or 0))
             gov_original += int(row.get("original_tokens", 0) or 0)
             gov_entered += int(row.get("entered_tokens", 0) or 0)
             family = str(row.get("family", "?"))
             gov_families[family] = gov_families.get(family, 0) + 1
     avoided += _fold_old_ranged(old_ranged)
+    for (sess, whole), rows in old_ranged.items():
+        credit = _fold_old_ranged({(sess, whole): rows})
+        saved_by_session[sess] = saved_by_session.get(sess, 0) + credit
+    for (sess, _path), rows in ranged_groups.items():
+        if cutoff and max(r[0] for r in rows) < cutoff:
+            continue
+        net = sum(r[2] for r in rows)
+        avoided += net
+        saved_by_session[sess] = saved_by_session.get(sess, 0) + net
+        sessions.add(sess)
+        for _ts, at, tokens in rows:
+            if at is not None:
+                spans[sess] = max(spans.get(sess, 0), int(at))
+                carried.append((sess, int(at), tokens, "saved"))
     # What those sessions consumed, from their transcripts: the denominator
     # for sift's saving. `cli` rows are sift's own commands, not a session.
     from . import usage as usage_mod  # local: keep the hook-hot path free of it.
-    used = usage_mod.usage((s for s in sessions if s and s != "cli"), cutoff)
+    exclude = usage_exclude or set()
+    used = usage_mod.usage((s for s in sessions if s and s != "cli" and s not in exclude),
+                           cutoff)
+    found, priced = set(used["found"]), set(used["priced"])
+    carry_saved_by = _carry_by_session(spans, carried, "saved")
+    carry_injected_by = _carry_by_session(spans, carried, "injected")
+
+    def net_carry(group: set) -> int:
+        return sum(carry_saved_by.get(s, 0) - carry_injected_by.get(s, 0) for s in group)
+    replay = _bug_replay(ctx, bug_hits, bug_sessions, usage_mod)
+    replay["hits_unnamed"] = bug_hits_unnamed
     return {
+        # Savings limited to the sessions whose usage was found (for the token
+        # percentages) and priced (for dollars); see `saved_by_session`.
+        "saved_in_matched": sum(saved_by_session.get(s, 0) for s in found),
+        "saved_in_priced": sum(saved_by_session.get(s, 0) for s in priced),
+        "saved_cached_matched": net_carry(found),
+        "saved_cached_priced": net_carry(priced),
+        "bug_replay": replay,
         "usage_sessions": used["sessions"],
         "usage_sessions_found": used["sessions_found"],
         "context_in": used["context_in"],
@@ -216,7 +306,6 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
         "dup_warned": counts["dup_warned"],
         "dup_denied": counts["dup_denied"],
         "ranged_steered": counts["ranged_steered"],
-        "nudges": counts["nudge_commit"] + counts["nudge_stop"],
         # No longer `_est`: every contributor is a real size now -- a refused
         # duplicate read is the file as the scan measured it, a ranged read is
         # the whole file minus the windows that were actually returned, per
@@ -230,9 +319,6 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
         "governed_entered_tokens": gov_entered,
         "governed_saved_tokens": max(0, gov_original - gov_entered),
         "governed_families": gov_families,
-        # A condensed result the model had to work around costs more than it
-        # saved, so the re-run count sits beside the saving, not in a footnote.
-        "governed_reruns": counts["governed_rerun"],
         # Floods seen, whether or not anything was done about them. With
         # `enabled` off this is the whole point: zero here after a week of real
         # work is the evidence that condensation would buy nothing.
@@ -286,14 +372,15 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
 # apart; `since` and `carry_basis` are labels every repo shares.
 _SUMMABLE = (
     "index_hits", "index_misses", "dup_warned", "dup_denied", "ranged_steered",
-    "nudges", "tokens_avoided", "tokens_injected", "governed_calls",
-    "governed_original_tokens", "governed_entered_tokens", "governed_reruns",
+    "tokens_avoided", "tokens_injected", "governed_calls",
+    "governed_original_tokens", "governed_entered_tokens",
     "floods_seen", "floods_passed", "flood_passed_tokens",
     "read_floods", "read_flood_tokens", "big_reads_denied",
     "denied_tokens", "flood_seen_tokens",
     "carry_cost", "carry_saved", "carry_injected", "lint_blocked",
     "usage_sessions", "usage_sessions_found", "context_in", "context_resent",
-    "output_tokens", "context_in_priced", "context_resent_priced")
+    "output_tokens", "context_in_priced", "context_resent_priced",
+    "saved_in_matched", "saved_in_priced", "saved_cached_matched", "saved_cached_priced")
 # Dollars are floats, summed apart from the counts above.
 _SUMMABLE_USD = ("context_in_usd", "context_resent_usd", "output_usd")
 
@@ -315,13 +402,19 @@ def summarise_all(root: Path, since: str = "7.days") -> Dict[str, Any]:
     repos: List[Dict[str, Any]] = []
     idle: List[str] = []
     found = upgrade.discover(root)
-    for repo in found:
+    ctxs = [Ctx(repo, paths.resolve_dir_name(repo)) for repo in found]
+    # A session that worked in two repos wrote to both ledgers, and each
+    # repo's summary read its whole usage, so the total counted it twice. It
+    # belongs to the repo where it did the most; the others count its savings
+    # as savings without a usage log.
+    owner = _session_owners(ctxs, since)
+    for repo, ctx in zip(found, ctxs):
         try:
             name = repo.relative_to(root).as_posix()
         except ValueError:
             name = str(repo)
-        ctx = Ctx(repo, paths.resolve_dir_name(repo))
-        data = summarise(ctx, since) if ctx.ledger.exists() else None
+        others = {s for s, r in owner.items() if r != ctx.root}
+        data = summarise(ctx, since, usage_exclude=others) if ctx.ledger.exists() else None
         if data is None or _is_idle(data):
             idle.append(name)
             continue
@@ -346,6 +439,23 @@ def _is_idle(data: Dict[str, Any]) -> bool:
     if any(int(v.get("calls", 0) or 0) for v in (data.get("consulted") or {}).values()):
         return False
     return not (data.get("governed_families") or {})
+
+
+def _session_owners(ctxs: List[Ctx], since: str) -> Dict[str, Path]:
+    """session id -> the repo whose ledger has the most rows for it in the
+    window."""
+    cutoff = _cutoff(since)
+    rows: Dict[str, Dict[Path, int]] = {}
+    for ctx in ctxs:
+        if not ctx.ledger.exists():
+            continue
+        for row in util.read_jsonl(ctx.ledger):
+            if cutoff and str(row.get("ts", "")) < cutoff:
+                continue
+            sess = str(row.get("session", ""))
+            per = rows.setdefault(sess, {})
+            per[ctx.root] = per.get(ctx.root, 0) + 1
+    return {s: max(per.items(), key=lambda kv: kv[1])[0] for s, per in rows.items()}
 
 
 def _aggregate(repos: List[Dict[str, Any]], since: str) -> Dict[str, Any]:
@@ -380,6 +490,16 @@ def _aggregate(repos: List[Dict[str, Any]], since: str) -> Dict[str, Any]:
         for model, usd in (r.get("by_model_usd") or {}).items():
             by_model[model] = by_model.get(model, 0.0) + float(usd or 0)
     total["by_model_usd"] = by_model
+    replay: Dict[str, Any] = {"hits": 0, "bugs": 0, "priced": 0, "predate": 0,
+                              "tokens": 0, "usd": 0.0, "usd_known": False,
+                              "hits_unnamed": 0}
+    for r in repos:
+        rr = r.get("bug_replay") or {}
+        for key in ("hits", "bugs", "priced", "predate", "tokens", "hits_unnamed"):
+            replay[key] += int(rr.get(key, 0) or 0)
+        replay["usd"] += float(rr.get("usd", 0) or 0)
+        replay["usd_known"] = replay["usd_known"] or bool(rr.get("usd_known"))
+    total["bug_replay"] = replay
     total["governed_families"] = families
     total["passed_families"] = passed
     total["passed_commands"] = commands
@@ -389,6 +509,46 @@ def _aggregate(repos: List[Dict[str, Any]], since: str) -> Dict[str, Any]:
         0, total["governed_original_tokens"] - total["governed_entered_tokens"])
     total["carry_basis"] = "turns after each event, per session"
     return total
+
+
+def _bug_replay(ctx: Ctx, hits: Dict[str, int], sessions: Dict[str, str],
+                usage_mod: Any) -> Dict[str, Any]:
+    """What the bugs `bug find` returned this period cost to fix the first
+    time: each bug's session, from its start to the `bug add`, counted once
+    per bug however often it was found again. An upper bound -- the session
+    may have done other work first, and a second look might have been quicker
+    without the record. A bug with no session is `predate`: recorded before
+    `bug add` noted one and outside every transcript this repo still has, or
+    imported from another tool."""
+    from . import journal as journal_mod  # local: not on the hook path.
+    out: Dict[str, Any] = {"hits": sum(hits.values()), "bugs": len(hits),
+                           "priced": 0, "predate": 0, "tokens": 0, "usd": 0.0,
+                           "usd_known": False}
+    if not hits:
+        return out
+    ts_of = {str(e.get("id")): str(e.get("ts", "")) for e in
+             journal_mod.entries(ctx) + journal_mod._quarantined(ctx)
+             if e.get("kind") == "bug"}
+    for bug in hits:
+        ts = ts_of.get(bug, "")
+        session = sessions.get(bug)
+        if not session or session == "cli":
+            session = usage_mod.session_at(ctx.root, ts) if ts else None
+        used = usage_mod.usage([session], None, until=ts) if session and ts else None
+        if not used or not used["sessions_found"]:
+            out["predate"] += 1
+            continue
+        tokens = used["context_in"] + used["context_resent"] + used["output_tokens"]
+        if not tokens:
+            out["predate"] += 1
+            continue
+        out["priced"] += 1
+        out["tokens"] += tokens
+        if used["context_in_priced"]:
+            out["usd_known"] = True
+            out["usd"] += (used["context_in_usd"] + used["context_resent_usd"]
+                           + used["output_usd"])
+    return out
 
 
 def _fold_old_ranged(groups: Dict[tuple, List[tuple]]) -> int:
@@ -401,6 +561,14 @@ def _fold_old_ranged(groups: Dict[tuple, List[tuple]]) -> int:
         whole = max(w for w, _ in rows)
         total += max(0, whole - sum(r for _, r in rows))
     return total
+
+
+def _carry_by_session(spans: Dict[str, int], rows: List[tuple], want: str) -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    for sess, at, tokens, kind in rows:
+        if kind == want:
+            out[sess] = out.get(sess, 0) + tokens * max(0, spans.get(sess, at) - at)
+    return out
 
 
 def _carry(spans: Dict[str, int], rows: List[tuple], want: str) -> int:

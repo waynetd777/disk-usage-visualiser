@@ -67,20 +67,6 @@ def head(root: Path) -> str:
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
-def rev_parse(root: Path, ref: str) -> str:
-    proc = run(root, ["rev-parse", "--short=8", ref])
-    return proc.stdout.strip() if proc.returncode == 0 else ""
-
-
-def is_reachable(root: Path, sha: str) -> bool:
-    """True when `sha` names a commit object in this clone. False after a
-    squash-merge, a rebase, or in a shallow CI clone - hence the fallbacks."""
-    if not sha:
-        return False
-    proc = run(root, ["cat-file", "-e", sha + "^{commit}"])
-    return proc.returncode == 0
-
-
 def _split_z(text: str) -> List[str]:
     return [p for p in text.split(NULL) if p]
 
@@ -163,43 +149,6 @@ def match_pathspecs(root: Path, pathspecs: Sequence[str]) -> List[str]:
     return _split_z(proc.stdout) if proc.returncode == 0 else []
 
 
-def diff_names(root: Path, base: str, ref: str = "HEAD",
-               pathspecs: Sequence[str] = ()) -> List[str]:
-    args = ["diff", "--name-only", "-z", base + ".." + ref]
-    if pathspecs:
-        args += ["--"] + [globspec(p) for p in pathspecs]
-    proc = run(root, args)
-    return _split_z(proc.stdout) if proc.returncode == 0 else []
-
-
-def log_names_since(root: Path, since: str, pathspecs: Sequence[str] = ()) -> List[str]:
-    """Fallback for an unreachable stamp: what changed since a timestamp."""
-    args = ["log", "--since=" + since, "--format=", "--name-only", "-z"]
-    if pathspecs:
-        args += ["--"] + [globspec(p) for p in pathspecs]
-    proc = run(root, args)
-    if proc.returncode != 0:
-        return []
-    seen: List[str] = []
-    for path in _split_z(proc.stdout):
-        if path not in seen:
-            seen.append(path)
-    return seen
-
-
-def commit_count_since(root: Path, since: str) -> int:
-    proc = run(root, ["log", "--since=" + since, "--format=%H"])
-    return len([l for l in proc.stdout.splitlines() if l.strip()]) if proc.returncode == 0 else 0
-
-
-def commits_between(root: Path, base: str, ref: str = "HEAD") -> int:
-    proc = run(root, ["rev-list", "--count", base + ".." + ref])
-    try:
-        return int(proc.stdout.strip())
-    except ValueError:
-        return 0
-
-
 def churn(root: Path, since: str) -> Dict[str, int]:
     """path -> number of commits touching it since `since` (BUILD-SPEC 17.3)."""
     proc = run(root, ["log", "--since=" + since, "--format=%x00commit", "--name-only"])
@@ -210,33 +159,6 @@ def churn(root: Path, since: str) -> Dict[str, int]:
         for line in {l.strip() for l in chunk.splitlines() if l.strip()}:
             counts[line] = counts.get(line, 0) + 1
     return counts
-
-
-def name_status(root: Path, base: str, ref: str = "HEAD",
-                find_renames: str = "-M50%") -> List[Tuple[str, str, str]]:
-    """[(status, old_path, new_path)]; old == new for non-renames."""
-    proc = run(root, ["diff", find_renames, "--name-status", "-z", base + ".." + ref])
-    if proc.returncode != 0:
-        return []
-    fields = proc.stdout.split(NULL)
-    out: List[Tuple[str, str, str]] = []
-    i = 0
-    while i < len(fields):
-        status = fields[i]
-        if not status:
-            i += 1
-            continue
-        if status[0] in ("R", "C"):
-            if i + 2 >= len(fields):
-                break
-            out.append((status, fields[i + 1], fields[i + 2]))
-            i += 3
-        else:
-            if i + 1 >= len(fields):
-                break
-            out.append((status, fields[i + 1], fields[i + 1]))
-            i += 2
-    return out
 
 
 def staged_files(root: Path) -> List[str]:
@@ -253,39 +175,6 @@ def staged_text(root: Path, path: str) -> Optional[str]:
     """
     proc = run(root, ["show", ":" + path])
     return proc.stdout if proc.returncode == 0 else None
-
-
-def commit_contents(root: Path, include_unstaged: bool = False) -> List[str]:
-    """Paths this commit will carry, asked of git rather than inferred.
-
-    Session tracking only sees edits made through the editing tools; anything
-    written by a shell command, an external editor, or a teammate's earlier
-    branch is invisible to it. At `git commit` time git already knows, so ask.
-    """
-    paths = staged_files(root)
-    if include_unstaged or not paths:
-        proc = run(root, ["diff", "--name-only", "-z"])
-        if proc.returncode == 0:
-            for path in _split_z(proc.stdout):
-                if path not in paths:
-                    paths.append(path)
-    return paths
-
-
-def subject_lines(root: Path, pathspecs: Sequence[str], limit: int = 30) -> List[str]:
-    args = ["log", "--format=%s", "-n", str(limit)]
-    if pathspecs:
-        args += ["--"] + [globspec(p) for p in pathspecs]
-    proc = run(root, args)
-    return proc.stdout.splitlines() if proc.returncode == 0 else []
-
-
-def commit_touches(root: Path, sha: str, paths: Sequence[str]) -> List[str]:
-    proc = run(root, ["show", "--name-only", "--format=", "-z", sha])
-    if proc.returncode != 0:
-        return []
-    touched = set(_split_z(proc.stdout))
-    return [p for p in paths if p in touched]
 
 
 def user_email(root: Path) -> str:

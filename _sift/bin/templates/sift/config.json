@@ -15,10 +15,6 @@
   "context": {
     "reinjection_interval": 25
   },
-  "store": {
-    "total_token_budget": 60000,
-    "sentence_per_line": true
-  },
   "scan": {
     "symbol_min_tokens": 500,
     "symbol_max_count": 30,
@@ -72,14 +68,6 @@
   "setup": {
     "describe_top": 25,
     "check_upgrade": true
-  },
-  "lint": {
-    "hard_fail": [
-      "W15",
-      "W16",
-      "W19"
-    ],
-    "stale_updated_days": 30
   },
   "ci": {
     "advisory": true

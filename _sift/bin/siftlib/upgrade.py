@@ -78,8 +78,17 @@ def find_clone(env: Optional[Dict[str, str]] = None) -> Optional[Path]:
 # Directories that never hold a repo of ours. `Library` is the one that
 # matters: cloud-sync providers mount under `Library/CloudStorage`, and a walk
 # through someone's synced notes is both slow and none of this tool's business.
-DISCOVERY_SKIP = {"Library", "Applications", "node_modules", "venv", "vendor",
-                  "__pycache__", "site-packages", "target", "dist", "build"}
+#
+# Build-output names (`build`, `dist`, `target`, `vendor`) are not here: the
+# walk stops at each repo, so it never meets a repo's own build folder, and
+# outside one those names are ordinary folders -- `~/Projects/vendor/<repo>`
+# was silently left out of every --all.
+DISCOVERY_SKIP = {"Library", "Applications", "node_modules", "venv",
+                  "__pycache__", "site-packages", "Box", "Box Sync"}
+# Sync folders that older installs of the providers put straight in the home
+# directory rather than under Library/CloudStorage, matched by prefix
+# (`OneDrive - Company`, `Dropbox (Personal)`).
+DISCOVERY_SKIP_PREFIXES = ("Dropbox", "OneDrive", "Google Drive", "iCloud Drive")
 # `~/a/b/c/d/e/repo` is already further down than anyone keeps working repos.
 DISCOVERY_MAX_DEPTH = 6
 
@@ -114,7 +123,8 @@ def discover(root: Path, max_depth: int = DISCOVERY_MAX_DEPTH) -> List[Path]:
         if depth >= max_depth:
             continue
         for entry in entries:
-            if entry.name.startswith(".") or entry.name in DISCOVERY_SKIP:
+            if (entry.name.startswith(".") or entry.name in DISCOVERY_SKIP
+                    or entry.name.startswith(DISCOVERY_SKIP_PREFIXES)):
                 continue
             try:
                 if entry.is_dir(follow_symlinks=False):

@@ -60,15 +60,20 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     rec = dict((scan.get("files") or {}).get(rel) or {})
     # The scan is a steering cache, not proof that the worktree is unchanged.
     # Duplicate denial must compare the content about to be read with the
-    # content previously seen, including edits made since the last scan.
+    # content previously seen, including edits made since the last scan -- and
+    # the scan's symbol ranges and size describe the file as it was scanned.
+    # Offered for a file edited since, they pointed at the wrong lines and
+    # sized a grown file under the refusal threshold.
     if rec:
         current_blob = gitutil.short_blob(gitutil.hash_object(h.ctx.root, rel))
-        if current_blob:
+        if current_blob and current_blob != rec.get("blob"):
+            rec = {"blob": current_blob}
+        elif current_blob:
             rec["blob"] = current_blob
     desc = (scan_mod.load_descriptions(h.ctx).get(rel) or {}).get("desc", "")
     tokens = int(rec.get("tokens", 0) or 0)
 
-    if rec or desc:
+    if rec.get("tokens") or desc:
         ledger.record(h.ctx, h.session_id, "index_hit", tokens)
     else:
         # A miss carries why, so a spike can be told apart from the transcript:
@@ -127,7 +132,6 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
                 out["event"] = "dup_denied"
                 return
             out["event"] = "dup_warned"
-            _record_read(state, rel, rec, tokens)
             _offer(h, state, out, _common.PREFIX + (
                 "{} was already read in this session and has not changed "
                 "(~{} tok).".format(rel, tokens)))
@@ -142,7 +146,9 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
             out["big"] = True
             out["event"] = "big_read_denied"
             return
-        _record_read(state, rel, rec, tokens)
+        # Not recorded as read here: the read has not happened, and one that
+        # then fails (over the Read tool's cap, a permission denied, a
+        # directory) stayed marked as in context. `post_read` records it.
         if not desc and not syms:
             return
         _offer(h, state, out, _common.PREFIX + " ".join(bits))
@@ -156,7 +162,7 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
         # those, so crediting the refusal as well booked the same file twice.
         ledger.record(h.ctx, h.session_id, out["event"],
                       size_tokens if out["big"] else tokens, path=rel,
-                      at_call=h.tool_call_index())
+                      at_call=h.carry_at())
     if out["big"]:
         if syms:
             how = "Symbols: {}. Read the part you need with offset/limit".format(
@@ -187,24 +193,16 @@ def _denied(h: "_common.HookCtx", ledger, reason: str) -> Dict[str, Any]:
     """
     from siftlib import util
     ledger.record(h.ctx, h.session_id, "injected", util.estimate_tokens(reason),
-                  at_call=h.tool_call_index())
+                  at_call=h.carry_at())
     return _common.deny(EVENT, reason)
 
 
 def _line_count(h: "_common.HookCtx", raw_path: str, rel: str,
                 tool_input: Dict[str, Any]) -> Optional[int]:
-    """How many lines the file has, counted only when a `limit` was given --
-    that is the one case `is_whole_read` needs it for -- so the ordinary read
-    costs no extra disk access. None when it cannot be counted."""
-    if tool_input.get("limit") is None:
-        return None
+    """How many lines the file has, for `is_whole_read`'s limit check. None
+    when it is not needed or cannot be counted."""
     path = raw_path if os.path.isabs(raw_path) else str(h.ctx.root / rel)
-    try:
-        with open(path, "rb") as fh:
-            data = fh.read()
-    except OSError:
-        return None
-    return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+    return _common.line_count(path, tool_input)
 
 
 def _size_tokens(h: "_common.HookCtx", raw_path: str, rel: str) -> int:
@@ -243,21 +241,6 @@ def _oversized_sift_file(h: "_common.HookCtx", rel: str, raw_path: str,
     if out["text"]:
         return _common.additional_context(EVENT, out["text"])
     return None
-
-
-def _record_read(state: Dict[str, Any], rel: str, rec: Dict[str, Any], tokens: int) -> None:
-    entry = (state.setdefault("files_read", {})).get(rel) or {
-        "count": 0, "tokens": tokens, "blob": rec.get("blob", ""),
-        "denied_once": False, "compacted": False}
-    entry["count"] = int(entry.get("count", 0)) + 1
-    entry["tokens"] = tokens or entry.get("tokens", 0)
-    entry["blob"] = rec.get("blob", entry.get("blob", ""))
-    entry["ranged"] = False
-    # The file is in the conversation again, so the compaction that evicted it
-    # no longer excuses the next read. Nothing used to clear this, which
-    # disarmed `deny` for that file for the rest of the session.
-    entry["compacted"] = False
-    state["files_read"][rel] = entry
 
 
 def _offer(h: "_common.HookCtx", state: Dict[str, Any], out: Dict[str, Any],

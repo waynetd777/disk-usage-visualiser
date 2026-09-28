@@ -23,16 +23,15 @@ meaningless for three files, and W17's one-sentence-per-line is a convention
 that does not need a checker. They are in `git show v1-pages:src/siftlib/lint.py`
 if the judgement was wrong.
 
-The authoritative hard-fail list is `config.DEFAULTS["lint"]["hard_fail"]`, not
-this docstring: an eval run caught a model answering "two" from a stale copy of
-these lines rather than from the page, which was right.
+The codes that block a commit are the ones the pre-commit hook passes to
+`--only` (`templates/githooks/pre-commit`); nothing in config changes them.
 """
 from __future__ import annotations
 
-import os
+import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set
 
 from . import gitutil, ignore, templates, util
 from .config import Config
@@ -42,16 +41,26 @@ SEV_ERROR = "error"
 SEV_WARNING = "warning"
 SEV_INFO = "info"
 
-HISTORY_CODES: Set[str] = set()  # no check reads git history any more
 
 SECRET_PATTERNS = [
-    re.compile(r"(?i)(api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*['\"]?[A-Za-z0-9_\-/+=]{16,}"),
+    # A named secret with a value. The name may run on (`AWS_SECRET_ACCESS_KEY`,
+    # `api_key_prod`) and may be a quoted JSON key, which is how one sits in a
+    # config file: `"api_key": "..."` has a quote between the name and the colon.
+    re.compile(r"(?i)(api[_-]?key|secret|token|password|passwd|pwd|access[_-]?key)"
+               r"[A-Za-z0-9_]*['\"]?\s*[:=]\s*['\"]?[A-Za-z0-9_\-/+=.]{16,}"),
     re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-    re.compile(r"(?i)(postgres|mysql|mongodb(\+srv)?|redis|amqp)://[^\s'\"]+:[^\s'\"]+@"),
-    re.compile(r"ghp_[A-Za-z0-9]{36}"),
-    re.compile(r"sk-[A-Za-z0-9]{20,}"),
+    # Credentials in any URL's userinfo, not only a database's: `https://u:p@host`.
+    re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s/'\"@:]+:[^\s/'\"@]+@"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36}"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}"),
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"),
+    # OpenAI and Anthropic keys carry dashes and underscores after `sk-`
+    # (`sk-proj-...`, `sk-ant-api03-...`), which `[A-Za-z0-9]` stopped at.
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"),
     re.compile(r"xox[bap]-[A-Za-z0-9-]+"),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/-]{20,}"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\."),
 ]
 
 # The character before the path may be anything that cannot itself be part of
@@ -103,17 +112,6 @@ HR_PATTERNS = [
                r"per annum|p\.?a\.?)\b"),
 ]
 
-MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
-BACKTICK_RE = re.compile(r"`([^`\n]+)`")
-JOURNAL_ID_RE = re.compile(r"^j-\d{8}-\d{6}-[0-9a-f]{4}$")
-SENTENCE_RE = re.compile(r"[.!?]\s+[A-Z(\"']")
-INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
-
-# Ruling 18: only links to real area/flow pages take part in the `links:`
-# correspondence check. The scaffolding links (overview, conventions, index,
-# decisions) are navigation, not relationships.
-STRUCTURAL_TARGETS = {"overview.md", "conventions.md", "index.md", "README.md"}
-
 
 class Issue(dict):
     def __init__(self, code: str, severity: str, path: str, line: int,
@@ -143,17 +141,13 @@ def _in_fence(lines: Sequence[str]) -> List[bool]:
     return out
 
 
-def run(ctx: Ctx, cfg: Config, fast: bool = False,
+def run(ctx: Ctx, cfg: Config,
         only: Optional[Set[str]] = None,
         staged: bool = False) -> List[dict]:
     issues: List[dict] = []
 
     def want(code: str) -> bool:
-        if only and code not in only:
-            return False
-        if fast and code in HISTORY_CODES:
-            return False
-        return True
+        return not (only and code not in only)
 
     if not ctx.exists:
         return issues
@@ -179,8 +173,10 @@ def run(ctx: Ctx, cfg: Config, fast: bool = False,
                                 "git rm --cached '{}' and check the .gitignore stanza "
                                 "is intact".format(path)))
         if not leaked:
-            ignored = util.read_text(ctx.root / ".gitignore")
-            if prefix not in ignored:
+            # Asked of git, not read off the root .gitignore: a nested
+            # `_sift/.gitignore` ignoring `local/` is fine, a negated
+            # `!_sift/local/` is not, and a substring test got both wrong.
+            if not _local_ignored(ctx, prefix):
                 issues.append(Issue("W19", SEV_ERROR, ".gitignore", 1,
                                     "local/ is not gitignored, so nothing stops private "
                                     "material being committed",
@@ -231,13 +227,17 @@ def run(ctx: Ctx, cfg: Config, fast: bool = False,
             continue
         if not text or "\x00" in text:
             continue
-        lines = text.splitlines()
+        lines = text.split("\n")
         # `conventions.md` and the README state the privacy rule, which means
         # spelling out the vocabulary the rule is about. A check that fires on
         # its own documentation is noise -- but W15 and W16 still apply there,
         # because a secret in a generated file is still a secret.
         own_docs = rel_sift in ("conventions.md", "README.md")
-        _secret_scan(issues, rel, lines, want, privacy=not own_docs,
+        if path.suffix.lower() == ".jsonl":
+            scanned = _jsonl_lines(issues, rel, lines, want)
+        else:
+            scanned = list(enumerate(lines))
+        _secret_scan(issues, rel, scanned, want, privacy=not own_docs,
                      generated=_generated_lines(text) if own_docs else frozenset())
 
         if want("W04") and path.suffix.lower() == ".md":
@@ -310,19 +310,88 @@ def _generated_lines(text: str) -> "frozenset[int]":
     return frozenset(range(first, first + block.count("\n") + 1))
 
 
-def _secret_scan(issues: List[dict], rel: str, lines: Sequence[str],
+def _local_ignored(ctx: Ctx, prefix: str) -> bool:
+    """Whether git would ignore a file under local/. When git cannot answer
+    (no repository, git missing), the root and nested .gitignore files are read
+    instead, as before -- a guess, but not a false alarm on every run."""
+    proc = gitutil.run(ctx.root, ["check-ignore", "-q", prefix + ".sift-probe"])
+    if proc.returncode in (0, 1):
+        return proc.returncode == 0
+    root = util.read_text(ctx.root / ".gitignore")
+    nested = util.read_text(ctx.dir / ".gitignore")
+    return prefix in root or "local/" in nested.split()
+
+
+def _jsonl_lines(issues: List[dict], rel: str, lines: Sequence[str],
+                 want) -> List["tuple"]:
+    """Each JSONL line, plus every line of every string value in it, decoded.
+
+    A record stores a newline as `\\n`, so on the raw line the letter before a
+    path on its second line is `n`, which W16 reads as part of a word: a
+    `bug add` whose error spanned two lines committed `/Users/...` clean.
+    Decoded, the path starts a line of its own. A line that does not parse is
+    reported (W22): the reader skips it, so a record in it is lost silently."""
+    out: List[tuple] = []
+    for i, raw in enumerate(lines):
+        out.append((i, raw))
+        if not raw.strip() or raw.lstrip().startswith("//"):
+            continue
+        try:
+            record = json.loads(raw)
+        except ValueError:
+            if want("W22"):
+                issues.append(Issue("W22", SEV_WARNING, rel, i + 1,
+                                    "line is not valid JSON, so every reader skips "
+                                    "it and any record in it is lost",
+                                    "fix or split the line; two records glued "
+                                    "together need a newline between them"))
+            continue
+        for value in _strings(record):
+            for part in re.split(r"\r\n|[\n\r\u2028\u2029\u0085]", value):
+                out.append((i, part))
+    return out
+
+
+def _strings(value: Any) -> List[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in list(value.keys()) + list(value.values()) for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+# Inside our own generated block, the examples of the rule itself -- written
+# with an ellipsis, `/Users/...` -- are scrubbed before W16 looks. Waiving the
+# whole block let anything typed between the markers through.
+_RULE_EXAMPLE = re.compile(r"(?:~|/[A-Za-z]+)/\.\.\.")
+
+
+def _secret_scan(issues: List[dict], rel: str, lines: Sequence["tuple"],
                  want, privacy: bool = True,
                  generated: "frozenset[int]" = frozenset()) -> None:
     """`privacy=False` for the files we generate ourselves: `conventions.md`
     states the rule, which means spelling out the vocabulary the rule is about.
     A check that fires on its own documentation is noise. W15 and W16 still
     apply there -- a secret in a generated file is still a secret -- except for
-    W16 inside the generated block itself, which `generated` carries."""
-    for i, line in enumerate(lines):
+    W16 inside the generated block itself, which `generated` carries.
+
+    `lines` is (line index, text) pairs, so one committed line can be scanned
+    as several texts (a JSONL record's decoded values) and still be reported
+    once, at its own line number."""
+    reported: Set[tuple] = set()
+
+    def report(code: str, i: int, issue: dict) -> None:
+        if (code, i) not in reported:
+            reported.add((code, i))
+            issues.append(issue)
+
+    for i, line in lines:
         if privacy and want("W20"):
             for pattern in HR_PATTERNS:
                 if pattern.search(line):
-                    issues.append(Issue(
+                    report("W20", i, Issue(
                         "W20", SEV_WARNING, rel, i + 1,
                         "reads like HR or compensation material, which is never "
                         "what a committed sift directory is for",
@@ -332,15 +401,17 @@ def _secret_scan(issues: List[dict], rel: str, lines: Sequence[str],
         if want("W15"):
             for pattern in SECRET_PATTERNS:
                 if pattern.search(line):
-                    issues.append(Issue("W15", SEV_ERROR, rel, i + 1,
-                                        "looks like a secret",
-                                        "Remove it and rotate the secret"))
+                    report("W15", i, Issue("W15", SEV_ERROR, rel, i + 1,
+                                           "looks like a secret",
+                                           "Remove it and rotate the secret"))
                     break
-        if want("W16") and i not in generated:
+        if want("W16"):
             probe = _without_allowed(line)
+            if i in generated:
+                probe = _RULE_EXAMPLE.sub("", probe)
             for pattern in ABSOLUTE_PATTERNS:
                 if pattern.search(probe):
-                    issues.append(Issue("W16", SEV_ERROR, rel, i + 1,
-                                        "absolute path outside the repo",
-                                        "Move it to local/ or make it repo-relative"))
+                    report("W16", i, Issue("W16", SEV_ERROR, rel, i + 1,
+                                           "absolute path outside the repo",
+                                           "Move it to local/ or make it repo-relative"))
                     break

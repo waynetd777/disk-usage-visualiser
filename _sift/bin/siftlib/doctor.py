@@ -7,13 +7,12 @@ index. It never rewrites content a human or an agent wrote.
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List
 
 from . import gitutil, hookcheck, openwolf, templates, util
 from .config import Config
@@ -22,11 +21,6 @@ from .paths import Ctx
 # A complete registration, per agent, as `templates/claude/settings.hooks.json`
 # and `templates/codex/hooks.json` ship it.
 HOOK_ENTRIES = {"Claude": 8, "Codex": 6}
-
-TIME_SENSITIVE = re.compile(
-    r"(?i)\bas of\b|\bcurrently\b|\b(january|february|march|april|may|june|july|"
-    r"august|september|october|november|december)\s+20\d\d\b")
-SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 def _check(checks: List[dict], cid: str, ok: bool, detail: str, fix: str = "") -> None:

@@ -150,7 +150,7 @@ def latest_session(root: Path, sift_dir: Optional[Path] = None) -> Optional[str]
     candidates = [p for p in base.glob("*/*.jsonl") if p.parent.name == name]
     if not candidates:
         return None
-    recorded = _last_recorded_session(sift_dir)
+    recorded = last_recorded_session(sift_dir)
     if recorded:
         for path in candidates:
             if path.stem == recorded:
@@ -160,7 +160,7 @@ def latest_session(root: Path, sift_dir: Optional[Path] = None) -> Optional[str]
     return newest.stem
 
 
-def _last_recorded_session(sift_dir: Optional[Path]) -> str:
+def last_recorded_session(sift_dir: Optional[Path]) -> str:
     """The newest session file sift wrote - its own record of being called."""
     if sift_dir is None:
         return ""

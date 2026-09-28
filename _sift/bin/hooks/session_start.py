@@ -53,6 +53,9 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
         # Compaction evicted the contents, so a later re-read is not a
         # duplicate and must not be refused as one.
         rec["compacted"] = True
+    # And a big file refused before the compaction may be refused once more:
+    # it is not in context now, and without this it was never refused again.
+    state["big_read_refused"] = {}
     digest = _precompact_digest(h, state)
     if not digest:
         session_mod.save(h.ctx, state)
@@ -102,7 +105,9 @@ def _precompact_digest(h: "_common.HookCtx", state: Dict[str, Any]) -> str:
     """PreCompact cannot inject; it snapshots. This puts the snapshot back."""
     from siftlib import util
 
-    snapshot = util.read_json(h.ctx.precompact / (h.session_id + ".json"), default=None)
+    from siftlib import session as session_mod
+    snapshot = util.read_json(
+        h.ctx.precompact / (session_mod.safe_name(h.session_id) + ".json"), default=None)
     source = snapshot if isinstance(snapshot, dict) else state
     edited = list(source.get("files_edited") or [])
     if not edited:

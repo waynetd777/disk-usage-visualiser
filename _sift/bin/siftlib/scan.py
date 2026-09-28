@@ -1,12 +1,12 @@
 """`scan` and `describe`.
 
 `scan` regenerates `.cache/scan.json` (blob sha, size, token estimate, top-level
-symbols), compacts `files.jsonl` after a union merge, and rewrites `covers:`
-entries whose file was renamed. Blob shas come from `git ls-files -s`, so the
-only files hashed in Python are the handful git reports as modified.
+symbols) and compacts `files.jsonl` after a union merge. Blob shas come from
+`git ls-files -s`, so the only files hashed in Python are the handful git
+reports as modified.
 
-Ruling 16: the sift directory is never scanned. It is infrastructure, and counting it
-as uncovered source would make `coverage` permanently wrong.
+The sift directory is never scanned: it is infrastructure, not the source the
+index describes.
 """
 from __future__ import annotations
 
@@ -19,15 +19,6 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from . import gitutil, ignore, symbols, util
 from .config import Config
 from .paths import Ctx
-
-DESC_MAX = 160
-
-
-def scannable_paths(ctx: Ctx, cfg: Config) -> List[str]:
-    tracked = gitutil.ls_files(ctx.root)
-    matcher = ignore.load(ctx.siftignore)
-    return [p for p in tracked
-            if not ctx.is_sift_path(p) and not matcher.ignored(p)]
 
 
 def _binary(path: str, binary_exts: Sequence[str]) -> bool:
@@ -246,13 +237,6 @@ def pending_descriptions(ctx: Ctx, cfg: Config,
 # ---------------------------------------------------------------------------
 # Renames (BUILD-SPEC 17.4)
 # ---------------------------------------------------------------------------
-
-def _spec_would_match(path: str, specs: Sequence[str]) -> bool:
-    """Cheap local approximation of git pathspec matching, used only to decide
-    whether a rename needs reporting. `git ls-files` cannot answer for a path
-    that no longer exists."""
-    matcher = ignore.Matcher(list(specs))
-    return matcher.ignored(path)
 
 
 # ---------------------------------------------------------------------------
