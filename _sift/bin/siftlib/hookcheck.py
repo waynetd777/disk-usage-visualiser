@@ -22,7 +22,10 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-TRANSCRIPTS = Path("~/.claude/projects").expanduser()
+# SIFT_TRANSCRIPTS points it elsewhere, which the tests use so no run reads the
+# machine's real sessions.
+TRANSCRIPTS = Path(os.environ.get("SIFT_TRANSCRIPTS")
+                   or "~/.claude/projects").expanduser()
 _HOOK_KINDS = ("hook_success", "hook_non_blocking_error", "hook_error")
 
 

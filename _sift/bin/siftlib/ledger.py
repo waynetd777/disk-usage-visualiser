@@ -119,10 +119,12 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
     consulted: Dict[str, Dict[str, int]] = {
         c: {"calls": 0, "hits": 0} for c in CONSULT_COMMANDS}
     blocked_codes: Dict[str, int] = {}
+    sessions: set = set()
     for row in util.read_jsonl(ctx.ledger):
         ts = str(row.get("ts", ""))
         if cutoff and ts < cutoff:
             continue
+        sessions.add(str(row.get("session", "")))
         event = str(row.get("event", ""))
         if event in counts:
             counts[event] += 1
@@ -172,6 +174,16 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
             if event in ("flood_seen", "flood_passed", "read_flood", "injected"):
                 # Cost: these tokens entered the conversation and stayed.
                 carried.append((sess, int(at), tokens, "cost"))
+                if event == "injected":
+                    carried.append((sess, int(at), tokens, "injected"))
+            elif event == "dup_denied" or (event == "ranged_steered" and "path" in row):
+                # A read kept out is kept out of every later turn too, the same
+                # as a condensed flood; only condensing was carried until
+                # 0.22.0, so the reads' re-sends went uncredited. A ranged
+                # row's tokens are the change in its file's credit, possibly
+                # negative, so the sum over a file's rows is weighted right.
+                # Rows from before the per-file fold carry nothing.
+                carried.append((sess, int(at), tokens, "saved"))
             elif event == "governed":
                 saved = int(row.get("original_tokens", 0) or 0) - \
                     int(row.get("entered_tokens", 0) or 0)
@@ -182,7 +194,22 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
             family = str(row.get("family", "?"))
             gov_families[family] = gov_families.get(family, 0) + 1
     avoided += _fold_old_ranged(old_ranged)
+    # What those sessions consumed, from their transcripts: the denominator
+    # for sift's saving. `cli` rows are sift's own commands, not a session.
+    from . import usage as usage_mod  # local: keep the hook-hot path free of it.
+    used = usage_mod.usage((s for s in sessions if s and s != "cli"), cutoff)
     return {
+        "usage_sessions": used["sessions"],
+        "usage_sessions_found": used["sessions_found"],
+        "context_in": used["context_in"],
+        "context_resent": used["context_resent"],
+        "output_tokens": used["output_tokens"],
+        "context_in_usd": used["context_in_usd"],
+        "context_resent_usd": used["context_resent_usd"],
+        "output_usd": used["output_usd"],
+        "context_in_priced": used["context_in_priced"],
+        "context_resent_priced": used["context_resent_priced"],
+        "by_model_usd": used["by_model_usd"],
         "since": since,
         "index_hits": counts["index_hit"],
         "index_misses": counts["index_miss"],
@@ -238,6 +265,9 @@ def summarise(ctx: Ctx, since: str = "7.days") -> Dict[str, Any]:
         # do not turn either into money naively.
         "carry_cost": _carry(spans, carried, "cost"),
         "carry_saved": _carry(spans, carried, "saved"),
+        # sift's own injected context, carried: part of carry_cost, and the
+        # amount taken off carry_saved for sift's net re-send saving.
+        "carry_injected": _carry(spans, carried, "injected"),
         "carry_basis": "turns after each event, per session",
         # Whether the written-down knowledge is read at all: calls to each
         # consulting command, and how many of them returned anything. Not a
@@ -261,7 +291,11 @@ _SUMMABLE = (
     "floods_seen", "floods_passed", "flood_passed_tokens",
     "read_floods", "read_flood_tokens", "big_reads_denied",
     "denied_tokens", "flood_seen_tokens",
-    "carry_cost", "carry_saved", "lint_blocked")
+    "carry_cost", "carry_saved", "carry_injected", "lint_blocked",
+    "usage_sessions", "usage_sessions_found", "context_in", "context_resent",
+    "output_tokens", "context_in_priced", "context_resent_priced")
+# Dollars are floats, summed apart from the counts above.
+_SUMMABLE_USD = ("context_in_usd", "context_resent_usd", "output_usd")
 
 
 def summarise_all(root: Path, since: str = "7.days") -> Dict[str, Any]:
@@ -339,6 +373,13 @@ def _aggregate(repos: List[Dict[str, Any]], since: str) -> Dict[str, Any]:
             if command in consulted:
                 consulted[command]["calls"] += int(c.get("calls", 0) or 0)
                 consulted[command]["hits"] += int(c.get("hits", 0) or 0)
+    for key in _SUMMABLE_USD:
+        total[key] = sum(float(r.get(key, 0) or 0) for r in repos)
+    by_model: Dict[str, float] = {}
+    for r in repos:
+        for model, usd in (r.get("by_model_usd") or {}).items():
+            by_model[model] = by_model.get(model, 0.0) + float(usd or 0)
+    total["by_model_usd"] = by_model
     total["governed_families"] = families
     total["passed_families"] = passed
     total["passed_commands"] = commands

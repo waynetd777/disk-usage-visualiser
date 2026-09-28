@@ -322,7 +322,8 @@ _ANSI = {"red": "1;31", "green": "32", "action": "1;36"}
 # A "plain number" cell: digits, optional thousands commas, decimals, sign. A
 # column of these is right-aligned like a spreadsheet; "L1-20" or "3 files" is
 # text and stays left, which is how the reader tells figures from labels.
-_NUMERIC_CELL = re.compile(r"^-?\d[\d,]*(\.\d+)?$")
+# A percentage, or a lone "-" for "no figure", lines up as a number too.
+_NUMERIC_CELL = re.compile(r"^(?:-|-?\d[\d,]*(\.\d+)?%?)$")
 # A cell may carry colour codes (e.g. a green/red net figure). Width and the
 # numeric test go by the visible text, so a coloured cell still lines up.
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
