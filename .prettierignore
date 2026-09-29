@@ -1,0 +1,11 @@
+dist
+dist-release
+src-tauri
+_sift
+node_modules
+package-lock.json
+index.html
+tools
+design
+docs
+*.md

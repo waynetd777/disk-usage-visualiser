@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Wayne Davies
+// SPDX-License-Identifier: MIT (see LICENSE at the repository root)
+
 // Renders an HTML file to a PNG with WebKit: snapshot.swift <in.html> <out.png> <width> <height> <scale>
 import AppKit
 import WebKit

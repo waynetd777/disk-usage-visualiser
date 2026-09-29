@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Wayne Davies
+// SPDX-License-Identifier: MIT (see LICENSE at the repository root)
+
 //! The volume a path lives on: its name, capacity and free space.
 
 use serde::Serialize;
@@ -44,13 +47,21 @@ pub fn root_name(root: &str) -> String {
     if root == "/" {
         boot_volume_name()
     } else {
-        Path::new(root).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| root.to_string())
+        Path::new(root)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string())
     }
 }
 
 pub fn info(root: &str) -> Volume {
     let (total, free) = stats(root).unwrap_or((0, 0));
-    Volume { name: root_name(root), total, free, used: total.saturating_sub(free) }
+    Volume {
+        name: root_name(root),
+        total,
+        free,
+        used: total.saturating_sub(free),
+    }
 }
 
 #[cfg(test)]

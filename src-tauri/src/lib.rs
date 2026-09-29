@@ -1,5 +1,8 @@
-mod files;
+// Copyright (c) 2026 Wayne Davies
+// SPDX-License-Identifier: MIT (see LICENSE at the repository root)
+
 mod cache;
+mod files;
 mod scan;
 mod volume;
 
@@ -33,7 +36,12 @@ pub fn stamp(what: &str) {
     if std::env::var_os("DU_TIMING").is_none() {
         return;
     }
-    let ms = START.lock().ok().and_then(|g| *g).map(|t| t.elapsed().as_millis()).unwrap_or(0);
+    let ms = START
+        .lock()
+        .ok()
+        .and_then(|g| *g)
+        .map(|t| t.elapsed().as_millis())
+        .unwrap_or(0);
     eprintln!("[timing] {ms:>5} ms  {what}");
 }
 
@@ -100,7 +108,11 @@ fn has_full_disk_access() -> bool {
 
 #[tauri::command]
 fn get_state(state: State<AppState>) -> AppInfo {
-    let root = state.root.lock().map(|r| r.clone()).unwrap_or_else(|_| "/".into());
+    let root = state
+        .root
+        .lock()
+        .map(|r| r.clone())
+        .unwrap_or_else(|_| "/".into());
     let scan = state.scan.lock().ok().and_then(|s| s.clone());
     AppInfo {
         root_name: volume::root_name(&root),
@@ -126,7 +138,11 @@ fn get_state(state: State<AppState>) -> AppInfo {
 #[tauri::command]
 fn get_progress(state: State<AppState>) -> ProgressInfo {
     let p = &state.progress;
-    let expected = state.scan.lock().ok().and_then(|s| s.as_ref().map(|s| s.items));
+    let expected = state
+        .scan
+        .lock()
+        .ok()
+        .and_then(|s| s.as_ref().map(|s| s.items));
     ProgressInfo {
         scanning: state.scanning.load(Ordering::SeqCst),
         items: p.items.load(Ordering::Relaxed),
@@ -134,7 +150,13 @@ fn get_progress(state: State<AppState>) -> ProgressInfo {
         dirs: p.dirs.load(Ordering::Relaxed),
         denied: p.denied.load(Ordering::Relaxed),
         current: p.current.lock().map(|c| c.clone()).unwrap_or_default(),
-        elapsed_ms: state.scan_started.lock().ok().and_then(|s| *s).map(|t| t.elapsed().as_millis() as u64).unwrap_or(0),
+        elapsed_ms: state
+            .scan_started
+            .lock()
+            .ok()
+            .and_then(|s| *s)
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0),
         expected_items: expected,
     }
 }
@@ -143,20 +165,36 @@ fn get_progress(state: State<AppState>) -> ProgressInfo {
 /// folder worth a block, as a share of the folder being viewed (the UI passes ~1/4000).
 #[tauri::command]
 fn get_tree(state: State<AppState>, path: String, min_fraction: f64) -> Result<scan::View, String> {
-    let scan = state.scan.lock().ok().and_then(|s| s.clone()).ok_or("no scan yet")?;
+    let scan = state
+        .scan
+        .lock()
+        .ok()
+        .and_then(|s| s.clone())
+        .ok_or("no scan yet")?;
     let root = scan.root.clone();
     let rel = if path == root {
         String::new()
     } else if root == "/" {
         path.trim_start_matches('/').to_string()
     } else {
-        path.strip_prefix(&format!("{root}/")).ok_or_else(|| format!("{path} is not under {root}"))?.to_string()
+        path.strip_prefix(&format!("{root}/"))
+            .ok_or_else(|| format!("{path} is not under {root}"))?
+            .to_string()
     };
     let parts: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
-    let node = scan.tree.find(&parts).ok_or_else(|| format!("{path} is not in the scan"))?;
+    let node = scan
+        .tree
+        .find(&parts)
+        .ok_or_else(|| format!("{path} is not in the scan"))?;
     let depth = parts.len() as u32;
     let min_weight = ((scan::weight(node) as f64) * min_fraction.clamp(0.0, 1.0)) as u64;
-    Ok(scan::view(node, &path, depth, min_weight.max(1), depth + 14))
+    Ok(scan::view(
+        node,
+        &path,
+        depth,
+        min_weight.max(1),
+        depth + 14,
+    ))
 }
 
 fn start_scan_thread(app: &AppHandle, root: String) -> Result<(), String> {
@@ -210,7 +248,13 @@ fn start_scan_thread(app: &AppHandle, root: String) -> Result<(), String> {
                     *cur = Some(Arc::new(s.clone()));
                 }
             }
-            cache::push_recent(cache::Recent { path: root.clone(), name, size: s.size, items: s.items, when: s.finished.clone() });
+            cache::push_recent(cache::Recent {
+                path: root.clone(),
+                name,
+                size: s.size,
+                items: s.items,
+                when: s.finished.clone(),
+            });
             scanning.store(false, Ordering::SeqCst);
             if let Err(e) = cache::save_scan(&s) {
                 eprintln!("could not cache the scan: {e}");
@@ -227,7 +271,11 @@ fn start_scan(app: AppHandle, root: Option<String>) -> Result<(), String> {
     let state: State<AppState> = app.state();
     let root = match root {
         Some(r) if !r.is_empty() => r,
-        _ => state.root.lock().map(|r| r.clone()).unwrap_or_else(|_| "/".into()),
+        _ => state
+            .root
+            .lock()
+            .map(|r| r.clone())
+            .unwrap_or_else(|_| "/".into()),
     };
     start_scan_thread(&app, root)
 }
@@ -243,7 +291,11 @@ fn reveal(path: String) -> Result<(), String> {
     if !Path::new(&path).exists() {
         return Err(format!("{path} does not exist"));
     }
-    Command::new("/usr/bin/open").arg("-R").arg(&path).status().map_err(|e| e.to_string())?;
+    Command::new("/usr/bin/open")
+        .arg("-R")
+        .arg(&path)
+        .status()
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -257,7 +309,11 @@ fn get_info(path: String) -> Result<(), String> {
     let script = format!(
         "tell application \"Finder\"\nactivate\nopen information window of (POSIX file \"{escaped}\" as alias)\nend tell"
     );
-    Command::new("/usr/bin/osascript").arg("-e").arg(script).status().map_err(|e| e.to_string())?;
+    Command::new("/usr/bin/osascript")
+        .arg("-e")
+        .arg(script)
+        .status()
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -283,7 +339,11 @@ fn fmt_bytes(b: u64) -> String {
     if b >= 1e12 {
         format!("{:.2} TB", b / 1e12)
     } else if b >= 1e9 {
-        if b / 1e9 >= 100.0 { format!("{:.0} GB", b / 1e9) } else { format!("{:.1} GB", b / 1e9) }
+        if b / 1e9 >= 100.0 {
+            format!("{:.0} GB", b / 1e9)
+        } else {
+            format!("{:.1} GB", b / 1e9)
+        }
     } else if b >= 1e6 {
         format!("{:.0} MB", b / 1e6)
     } else {
@@ -295,7 +355,7 @@ fn fmt_count(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -307,15 +367,24 @@ fn fmt_count(n: u64) -> String {
 fn volume_line(root: &str) -> String {
     let v = volume::info(root);
     if v.total == 0 {
-        return format!("{}", volume::root_name(root));
+        return volume::root_name(root);
     }
-    format!("{}: {} used of {}", v.name, fmt_bytes(v.used), fmt_bytes(v.total))
+    format!(
+        "{}: {} used of {}",
+        v.name,
+        fmt_bytes(v.used),
+        fmt_bytes(v.total)
+    )
 }
 
 pub fn run() {
     let root = cache::load_root();
     tauri::Builder::default()
-        .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(STATE_FLAGS).build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(STATE_FLAGS)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState {
@@ -365,9 +434,20 @@ pub fn run() {
             let open = MenuItem::with_id(app, "open", "Open Disk Usage", true, None::<&str>)?;
             let rescan = MenuItem::with_id(app, "rescan", "Rescan", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&vol, &PredefinedMenuItem::separator(app)?, &open, &rescan, &PredefinedMenuItem::separator(app)?, &quit])?;
+            let menu = Menu::with_items(
+                app,
+                &[
+                    &vol,
+                    &PredefinedMenuItem::separator(app)?,
+                    &open,
+                    &rescan,
+                    &PredefinedMenuItem::separator(app)?,
+                    &quit,
+                ],
+            )?;
             // Template image: black + alpha, tinted by macOS for light and dark menu bars.
-            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray@2x.png")).expect("tray icon is a valid png");
+            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray@2x.png"))
+                .expect("tray icon is a valid png");
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(tray_icon)
                 .icon_as_template(true)
@@ -402,9 +482,17 @@ pub fn run() {
                                 prog_in_menu = true;
                             }
                             let items = st.progress.items.load(Ordering::Relaxed);
-                            let expected = st.scan.lock().ok().and_then(|s| s.as_ref().map(|s| s.items));
+                            let expected = st
+                                .scan
+                                .lock()
+                                .ok()
+                                .and_then(|s| s.as_ref().map(|s| s.items));
                             let line = match expected {
-                                Some(e) if e > 0 => format!("Scanning — {}% ({} items)", ((items as f64 / e as f64) * 100.0).min(99.0) as u64, fmt_count(items)),
+                                Some(e) if e > 0 => format!(
+                                    "Scanning — {}% ({} items)",
+                                    ((items as f64 / e as f64) * 100.0).min(99.0) as u64,
+                                    fmt_count(items)
+                                ),
                                 _ => format!("Scanning — {} items", fmt_count(items)),
                             };
                             let _ = prog.set_text(line);
@@ -413,8 +501,12 @@ pub fn run() {
                             prog_in_menu = false;
                         }
                         // statfs is cheap; every 5 s keeps the used/free line honest.
-                        if ticks % 5 == 0 {
-                            let root = st.root.lock().map(|r| r.clone()).unwrap_or_else(|_| "/".into());
+                        if ticks.is_multiple_of(5) {
+                            let root = st
+                                .root
+                                .lock()
+                                .map(|r| r.clone())
+                                .unwrap_or_else(|_| "/".into());
                             let _ = vol.set_text(volume_line(&root));
                         }
                         ticks = ticks.wrapping_add(1);
@@ -428,7 +520,11 @@ pub fn run() {
                 // so no frame of the default white can appear behind the webview. Keep these two
                 // colours in step with --bg in src/styles.css and index.html.
                 let dark = matches!(w.theme(), Ok(tauri::Theme::Dark));
-                let bg = if dark { tauri::window::Color(30, 30, 32, 255) } else { tauri::window::Color(245, 245, 247, 255) };
+                let bg = if dark {
+                    tauri::window::Color(30, 30, 32, 255)
+                } else {
+                    tauri::window::Color(245, 245, 247, 255)
+                };
                 let _ = w.set_background_color(Some(bg));
 
                 // The WKWebView is a separate surface and Tauri's set_background_color is a no-op
@@ -439,14 +535,24 @@ pub fn run() {
                 // onto the event loop, and a show() here would race it on a cold start.
                 #[cfg(target_os = "macos")]
                 {
-                    let (r, g, b) = if dark { (30.0, 30.0, 32.0) } else { (245.0, 245.0, 247.0) };
+                    let (r, g, b) = if dark {
+                        (30.0, 30.0, 32.0)
+                    } else {
+                        (245.0, 245.0, 247.0)
+                    };
                     let w_show = w.clone();
                     let _ = w.with_webview(move |wv| {
                         unsafe {
                             use objc2::runtime::AnyObject;
                             let webview: *mut AnyObject = wv.inner() as *mut AnyObject;
-                            let color = objc2_app_kit::NSColor::colorWithSRGBRed_green_blue_alpha(r / 255.0, g / 255.0, b / 255.0, 1.0);
-                            let _: () = objc2::msg_send![webview, setUnderPageBackgroundColor: &*color];
+                            let color = objc2_app_kit::NSColor::colorWithSRGBRed_green_blue_alpha(
+                                r / 255.0,
+                                g / 255.0,
+                                b / 255.0,
+                                1.0,
+                            );
+                            let _: () =
+                                objc2::msg_send![webview, setUnderPageBackgroundColor: &*color];
                             let no = objc2_foundation::NSNumber::new_bool(false);
                             let key = objc2_foundation::NSString::from_str("drawsBackground");
                             let _: () = objc2::msg_send![webview, setValue: &*no, forKey: &*key];

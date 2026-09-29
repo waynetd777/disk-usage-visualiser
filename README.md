@@ -103,7 +103,9 @@ make install-app      # signed build, copied to /Applications
 |---|---|
 | `make install-app` | Build the signed app and replace the copy in /Applications |
 | `make dmg` | Build the app and pack it into the installer, `dist-release/Disk-Usage.dmg` |
-| `make check` | Rust tests and TypeScript type-check |
+| `make check` | Lint, Rust tests and TypeScript type-check |
+| `make lint` | rustfmt and clippy for the Rust, ESLint and Prettier for the TypeScript; fails on any warning |
+| `make fmt` | Reformat the Rust and TypeScript in place |
 | `make dev` | App with hot reload (shows as `DiskUsage` in the Dock; the bundle shows `Disk Usage`) |
 | `make icons` | Redraw the icon artwork (`tools/make_icons.py`) and regenerate the Tauri icon set |
 | `make screenshots` | Recapture `docs/screenshots/app.png` (needs Screen Recording for the terminal) |

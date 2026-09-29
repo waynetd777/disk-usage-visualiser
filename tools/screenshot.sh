@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright (c) 2026 Wayne Davies
+# SPDX-License-Identifier: MIT (see LICENSE at the repository root)
+
 # Recapture docs/screenshots/app.png from the installed app, at a fixed window size so the README
 # image stays consistent.
 #

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Wayne Davies
+// SPDX-License-Identifier: MIT (see LICENSE at the repository root)
+
 //! The last scan of each root, kept so the next launch can draw it at once while a fresh scan
 //! runs behind it; and the short list of roots scanned recently.
 //!
@@ -71,7 +74,11 @@ pub fn save_scan(s: &Scan) -> Result<(), String> {
 pub fn load_scan(root: &str) -> Option<Scan> {
     let bytes = fs::read(scan_path(root)).ok()?;
     let s: Scan = serde_json::from_slice(&bytes).ok()?;
-    if s.root == root { Some(s) } else { None }
+    if s.root == root {
+        Some(s)
+    } else {
+        None
+    }
 }
 
 pub fn scan_file_size(root: &str) -> u64 {
@@ -83,12 +90,18 @@ fn recent_path() -> PathBuf {
 }
 
 pub fn load_recent() -> Vec<Recent> {
-    fs::read(recent_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    fs::read(recent_path())
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
 }
 
 /// Move (or add) `r` to the front and keep the newest RECENT_MAX.
 pub fn push_recent(r: Recent) -> Vec<Recent> {
-    let mut list: Vec<Recent> = load_recent().into_iter().filter(|x| x.path != r.path).collect();
+    let mut list: Vec<Recent> = load_recent()
+        .into_iter()
+        .filter(|x| x.path != r.path)
+        .collect();
     list.insert(0, r);
     list.truncate(RECENT_MAX);
     if let Ok(bytes) = serde_json::to_vec_pretty(&list) {
@@ -99,7 +112,11 @@ pub fn push_recent(r: Recent) -> Vec<Recent> {
 
 /// The saved root to open with next time. Falls back to "/".
 pub fn load_root() -> String {
-    fs::read_to_string(dir().join("root.txt")).map(|s| s.trim().to_string()).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/".into())
+    fs::read_to_string(dir().join("root.txt"))
+        .map(|s| s.trim().to_string())
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "/".into())
 }
 
 pub fn save_root(root: &str) {
@@ -128,11 +145,18 @@ mod tests {
             size: 3,
             apparent: 4,
             denied: 0,
-            tree: Node { name: "x".into(), size: 3, ..Default::default() },
+            tree: Node {
+                name: "x".into(),
+                size: 3,
+                ..Default::default()
+            },
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: Scan = serde_json::from_str(&json).unwrap();
         assert_eq!(back.tree.size, 3);
-        assert!(json.contains("\"n\":\"x\""), "compact field names keep a 300k-node file small");
+        assert!(
+            json.contains("\"n\":\"x\""),
+            "compact field names keep a 300k-node file small"
+        );
     }
 }

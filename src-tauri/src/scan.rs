@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Wayne Davies
+// SPDX-License-Identifier: MIT (see LICENSE at the repository root)
+
 //! The scan: a parallel walk of one folder tree that produces a tree of folder sizes.
 //!
 //! Only folders are kept. The files directly inside a folder are summed into that folder's
@@ -6,12 +9,11 @@
 //!
 //! Two sizes are tracked for every folder:
 //!
-//!   * `size`     — allocated bytes on disk (`st_blocks * 512`). This is what the treemap draws,
-//!                  because the question the app answers is "what is using my disk". A dataless
-//!                  file (OneDrive / iCloud "online-only") has a length but no blocks, so it
-//!                  counts as nothing here.
-//!   * `apparent` — logical bytes (`st_size`). For a cloud folder this is what is in the cloud,
-//!                  whether or not it is also on disk, and the UI shows it beside `size`.
+//! * `size` — allocated bytes on disk (`st_blocks * 512`). This is what the treemap draws,
+//!   because the question the app answers is "what is using my disk". A dataless file
+//!   (OneDrive / iCloud "online-only") has a length but no blocks, so it counts as nothing here.
+//! * `apparent` — logical bytes (`st_size`). For a cloud folder this is what is in the cloud,
+//!   whether or not it is also on disk, and the UI shows it beside `size`.
 //!
 //! The walk is one rayon task per directory, which keeps every core busy on an SSD and is
 //! naturally work-stealing on a lopsided tree. Progress is a handful of atomics the UI polls;
@@ -91,7 +93,15 @@ impl Progress {
 /// Never descended into, whatever the root. `/System/Volumes` is where the Data volume and
 /// every firmlink target really live, so walking it from `/` would count the whole disk twice;
 /// `/Volumes` is other disks; the rest are virtual.
-const SKIP: &[&str] = &["/System/Volumes", "/Volumes", "/dev", "/Network", "/.vol", "/cores", "/private/var/vm"];
+const SKIP: &[&str] = &[
+    "/System/Volumes",
+    "/Volumes",
+    "/dev",
+    "/Network",
+    "/.vol",
+    "/cores",
+    "/private/var/vm",
+];
 
 fn skipped(p: &Path) -> bool {
     SKIP.iter().any(|s| Path::new(s) == p)
@@ -99,7 +109,9 @@ fn skipped(p: &Path) -> bool {
 
 /// The top-level folder of a cloud provider: everything under it is "in the cloud".
 fn is_cloud_root(p: &Path) -> bool {
-    let Some(parent) = p.parent() else { return false };
+    let Some(parent) = p.parent() else {
+        return false;
+    };
     let s = parent.to_string_lossy();
     s.ends_with("/Library/CloudStorage") || s.ends_with("/Library/Mobile Documents")
 }
@@ -113,7 +125,12 @@ pub fn walk(dir: &Path, name: String, cloud: bool, prog: &Progress) -> Option<No
         Ok(r) => r,
         Err(_) => {
             prog.denied.fetch_add(1, Ordering::Relaxed);
-            return Some(Node { name, cloud, denied: 1, ..Default::default() });
+            return Some(Node {
+                name,
+                cloud,
+                denied: 1,
+                ..Default::default()
+            });
         }
     };
     prog.dirs.fetch_add(1, Ordering::Relaxed);
@@ -137,18 +154,25 @@ pub fn walk(dir: &Path, name: String, cloud: bool, prog: &Progress) -> Option<No
             ls += md.blocks() * 512;
         }
     }
-    prog.items.fetch_add(files + subdirs.len() as u64, Ordering::Relaxed);
+    prog.items
+        .fetch_add(files + subdirs.len() as u64, Ordering::Relaxed);
     prog.bytes.fetch_add(ls, Ordering::Relaxed);
 
     let mut kids: Vec<Node> = if subdirs.len() > 1 {
-        subdirs.into_par_iter().filter_map(|(p, n)| walk(&p, n, cloud, prog)).collect()
+        subdirs
+            .into_par_iter()
+            .filter_map(|(p, n)| walk(&p, n, cloud, prog))
+            .collect()
     } else {
-        subdirs.into_iter().filter_map(|(p, n)| walk(&p, n, cloud, prog)).collect()
+        subdirs
+            .into_iter()
+            .filter_map(|(p, n)| walk(&p, n, cloud, prog))
+            .collect()
     };
     if prog.cancel.load(Ordering::Relaxed) {
         return None;
     }
-    kids.sort_by(|a, b| b.size.cmp(&a.size));
+    kids.sort_by_key(|k| std::cmp::Reverse(k.size));
 
     let mut node = Node {
         name,
@@ -187,7 +211,11 @@ impl Node {
 /// and would otherwise vanish into the "more folders" block. Inside such a tree every weight is
 /// then proportional to cloud size, so zooming into it still says which parts are big.
 pub fn weight(n: &Node) -> u64 {
-    if n.cloud { n.size.max(n.apparent / 50) } else { n.size }
+    if n.cloud {
+        n.size.max(n.apparent / 50)
+    } else {
+        n.size
+    }
 }
 
 /// What the UI draws: the subtree under one folder, with folders too small to see folded into
@@ -221,7 +249,11 @@ pub fn view(node: &Node, path: &str, depth: u32, min_weight: u64, max_depth: u32
     let (mut more, mut more_size, mut more_apparent, mut more_weight) = (0u32, 0u64, 0u64, 0u64);
     for k in &node.kids {
         if weight(k) >= min_weight && depth < max_depth {
-            let p = if path == "/" { format!("/{}", k.name) } else { format!("{path}/{}", k.name) };
+            let p = if path == "/" {
+                format!("/{}", k.name)
+            } else {
+                format!("{path}/{}", k.name)
+            };
             kids.push(view(k, &p, depth + 1, min_weight, max_depth));
         } else {
             more += 1;
@@ -267,9 +299,15 @@ mod tests {
         let n = walk(&dir, "root".into(), false, &prog).unwrap();
         assert_eq!(n.files, 1);
         assert_eq!(n.apparent, 14000);
-        assert!(n.size >= 14000, "allocated size is at least the logical size on APFS");
+        assert!(
+            n.size >= 14000,
+            "allocated size is at least the logical size on APFS"
+        );
         assert_eq!(n.kids.len(), 2);
-        assert_eq!(n.kids[0].name, "a", "children are sorted by size, largest first");
+        assert_eq!(
+            n.kids[0].name, "a",
+            "children are sorted by size, largest first"
+        );
         assert_eq!(n.items, 5, "top.txt, a, a/b, a/b/deep.txt, c");
         assert_eq!(n.find(&["a", "b"]).unwrap().files, 1);
         let v = view(&n, "/x", 0, 1, 10);
@@ -289,19 +327,46 @@ mod tests {
 
     #[test]
     fn cloud_folders_keep_a_floor() {
-        let online_only = Node { name: "OneDrive".into(), size: 0, apparent: 8_500_000_000, cloud: true, ..Default::default() };
+        let online_only = Node {
+            name: "OneDrive".into(),
+            size: 0,
+            apparent: 8_500_000_000,
+            cloud: true,
+            ..Default::default()
+        };
         assert_eq!(weight(&online_only), 170_000_000);
-        let pinned = Node { name: "OneDrive".into(), size: 55_000_000_000, apparent: 295_000_000_000, cloud: true, ..Default::default() };
-        assert_eq!(weight(&pinned), 55_000_000_000, "on-disk size wins when it is the larger");
-        let local = Node { name: "Docs".into(), size: 0, apparent: 1_000_000, ..Default::default() };
+        let pinned = Node {
+            name: "OneDrive".into(),
+            size: 55_000_000_000,
+            apparent: 295_000_000_000,
+            cloud: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            weight(&pinned),
+            55_000_000_000,
+            "on-disk size wins when it is the larger"
+        );
+        let local = Node {
+            name: "Docs".into(),
+            size: 0,
+            apparent: 1_000_000,
+            ..Default::default()
+        };
         assert_eq!(weight(&local), 0, "only cloud folders get the floor");
     }
 
     #[test]
     fn cloud_roots() {
-        assert!(is_cloud_root(Path::new("/Users/x/Library/CloudStorage/OneDrive-Personal")));
-        assert!(is_cloud_root(Path::new("/Users/x/Library/Mobile Documents/com~apple~CloudDocs")));
-        assert!(!is_cloud_root(Path::new("/Users/x/Library/CloudStorage/OneDrive-Personal/Docs")));
+        assert!(is_cloud_root(Path::new(
+            "/Users/x/Library/CloudStorage/OneDrive-Personal"
+        )));
+        assert!(is_cloud_root(Path::new(
+            "/Users/x/Library/Mobile Documents/com~apple~CloudDocs"
+        )));
+        assert!(!is_cloud_root(Path::new(
+            "/Users/x/Library/CloudStorage/OneDrive-Personal/Docs"
+        )));
         assert!(skipped(Path::new("/System/Volumes")));
         assert!(!skipped(Path::new("/System/Library")));
     }

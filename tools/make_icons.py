@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Wayne Davies
+# SPDX-License-Identifier: MIT (see LICENSE at the repository root)
+
 """Draw the app's artwork: design/icon.png (the Dock icon source) and src-tauri/icons/tray@2x.png.
 
 The icon is the app itself in miniature: a dark tile holding a treemap of nested blocks in the

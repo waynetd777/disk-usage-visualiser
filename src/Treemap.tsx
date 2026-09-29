@@ -1,6 +1,9 @@
+// Copyright (c) 2026 Wayne Davies
+// SPDX-License-Identifier: MIT (see LICENSE at the repository root)
+
 import { createPortal } from "react-dom";
 import FileTable from "./FileTable";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { View } from "./types";
 import { fmt, fmtN } from "./util";
 
@@ -8,13 +11,7 @@ import { fmt, fmtN } from "./util";
 /// `files` block, and folders too small to draw are one `more` block, so a folder's area is
 /// always its whole size.
 export type Block =
-  | { kind: "dir"; view: View }
-  | { kind: "files"; view: View }
-  | { kind: "more"; view: View };
-
-export function blockPath(b: Block): string {
-  return b.view.path;
-}
+  { kind: "dir"; view: View } | { kind: "files"; view: View } | { kind: "more"; view: View };
 
 interface Props {
   tree: View;
@@ -38,35 +35,63 @@ interface Item {
 }
 
 /// Squarified treemap (Bruls, Huizing, van Wijk). Items sorted by size, descending.
-function squarify(items: Item[], w: number, h: number): { item: Item; x: number; y: number; w: number; h: number }[] {
+function squarify(
+  items: Item[],
+  w: number,
+  h: number,
+): { item: Item; x: number; y: number; w: number; h: number }[] {
   const rects: { item: Item; x: number; y: number; w: number; h: number }[] = [];
   const total = items.reduce((a, b) => a + b.size, 0);
   if (total <= 0 || w <= 0 || h <= 0) return rects;
   const scale = (w * h) / total;
-  let rx = 0, ry = 0, rw = w, rh = h;
+  let rx = 0,
+    ry = 0,
+    rw = w,
+    rh = h;
   let row: { item: Item; a: number }[] = [];
   const worst = (r: { a: number }[], side: number) => {
-    let s = 0, mx = 0, mn = Infinity;
-    for (const i of r) { s += i.a; mx = Math.max(mx, i.a); mn = Math.min(mn, i.a); }
+    let s = 0,
+      mx = 0,
+      mn = Infinity;
+    for (const i of r) {
+      s += i.a;
+      mx = Math.max(mx, i.a);
+      mn = Math.min(mn, i.a);
+    }
     return Math.max((side * side * mx) / (s * s), (s * s) / (side * side * mn));
   };
   const layout = (r: { item: Item; a: number }[]) => {
     const s = r.reduce((a, b) => a + b.a, 0);
     if (rw >= rh) {
-      const sw = s / rh; let cy = ry;
-      for (const i of r) { const ch = i.a / sw; rects.push({ item: i.item, x: rx, y: cy, w: sw, h: ch }); cy += ch; }
-      rx += sw; rw -= sw;
+      const sw = s / rh;
+      let cy = ry;
+      for (const i of r) {
+        const ch = i.a / sw;
+        rects.push({ item: i.item, x: rx, y: cy, w: sw, h: ch });
+        cy += ch;
+      }
+      rx += sw;
+      rw -= sw;
     } else {
-      const sh = s / rw; let cx = rx;
-      for (const i of r) { const cw = i.a / sh; rects.push({ item: i.item, x: cx, y: ry, w: cw, h: sh }); cx += cw; }
-      ry += sh; rh -= sh;
+      const sh = s / rw;
+      let cx = rx;
+      for (const i of r) {
+        const cw = i.a / sh;
+        rects.push({ item: i.item, x: cx, y: ry, w: cw, h: sh });
+        cx += cw;
+      }
+      ry += sh;
+      rh -= sh;
     }
   };
   for (const it of items) {
     const a = { item: it, a: it.size * scale };
     const side = Math.min(rw, rh);
     if (side <= 0) break;
-    if (row.length && worst([...row, a], side) > worst(row, side)) { layout(row); row = [a]; } else row.push(a);
+    if (row.length && worst([...row, a], side) > worst(row, side)) {
+      layout(row);
+      row = [a];
+    } else row.push(a);
   }
   if (row.length) layout(row);
   return rects;
@@ -81,25 +106,28 @@ function looseWeight(v: View): number {
 function childrenOf(v: View): Item[] {
   const items: Item[] = v.kids.map((k) => ({ block: { kind: "dir", view: k }, size: k.weight }));
   const lw = looseWeight(v);
-  if (lw > 0 || (v.files > 0 && v.kids.length === 0 && v.more === 0)) items.push({ block: { kind: "files", view: v }, size: Math.max(lw, 1) });
-  if (v.more > 0 && v.more_weight > 0) items.push({ block: { kind: "more", view: v }, size: v.more_weight });
+  if (lw > 0 || (v.files > 0 && v.kids.length === 0 && v.more === 0))
+    items.push({ block: { kind: "files", view: v }, size: Math.max(lw, 1) });
+  if (v.more > 0 && v.more_weight > 0)
+    items.push({ block: { kind: "more", view: v }, size: v.more_weight });
   items.sort((a, b) => b.size - a.size);
   return items;
 }
 
-export function blockTitle(b: Block): string {
+function blockTitle(b: Block): string {
   if (b.kind === "files") return b.view.files === 1 ? "1 file" : `${fmtN(b.view.files)} files`;
-  if (b.kind === "more") return b.view.more === 1 ? "1 more folder" : `${fmtN(b.view.more)} more folders`;
+  if (b.kind === "more")
+    return b.view.more === 1 ? "1 more folder" : `${fmtN(b.view.more)} more folders`;
   return b.view.name;
 }
 
-export function blockSize(b: Block): number {
+function blockSize(b: Block): number {
   if (b.kind === "files") return b.view.loose_size;
   if (b.kind === "more") return b.view.more_size;
   return b.view.size;
 }
 
-export function blockCloud(b: Block): number {
+function blockCloud(b: Block): number {
   if (!b.view.cloud) return 0;
   if (b.kind === "files") return b.view.loose_apparent;
   if (b.kind === "more") return b.view.more_apparent;
@@ -137,9 +165,11 @@ function draw(b: Block, x: number, y: number, w: number, h: number, out: HTMLEle
       const cloud = blockCloud(b);
       if (cloud > 0) {
         s.innerHTML =
-          w >= 320 ? `${fmt(size)} on disk · ${CLOUD}<span class="cl">${fmt(cloud)}</span> in cloud`
-          : w >= 190 ? `${fmt(size)} · ${CLOUD}<span class="cl">${fmt(cloud)}</span>`
-          : `${fmt(size)} ${CLOUD}`;
+          w >= 320
+            ? `${fmt(size)} on disk · ${CLOUD}<span class="cl">${fmt(cloud)}</span> in cloud`
+            : w >= 190
+              ? `${fmt(size)} · ${CLOUD}<span class="cl">${fmt(cloud)}</span>`
+              : `${fmt(size)} ${CLOUD}`;
       } else s.textContent = fmt(size);
       hd.appendChild(s);
     }
@@ -157,14 +187,24 @@ function draw(b: Block, x: number, y: number, w: number, h: number, out: HTMLEle
   out.appendChild(el);
   if (b.kind !== "dir") return;
   const top = labelled ? HEAD : PAD;
-  const iw = w - PAD * 2 - 2, ih = h - top - PAD - 2;
+  const iw = w - PAD * 2 - 2,
+    ih = h - top - PAD - 2;
   if (iw < 10 || ih < 10) return;
   const items = childrenOf(v);
   if (!items.length) return;
   let i = 0;
   for (const r of squarify(items, iw, ih)) {
-    const gx = r.x > 0 ? GAP / 2 : 0, gy = r.y > 0 ? GAP / 2 : 0;
-    draw(r.item.block, PAD + r.x + gx, top + r.y + gy, r.w - gx - GAP / 2, r.h - gy - GAP / 2, el, `${id}.${i++}`);
+    const gx = r.x > 0 ? GAP / 2 : 0,
+      gy = r.y > 0 ? GAP / 2 : 0;
+    draw(
+      r.item.block,
+      PAD + r.x + gx,
+      top + r.y + gy,
+      r.w - gx - GAP / 2,
+      r.h - gy - GAP / 2,
+      el,
+      `${id}.${i++}`,
+    );
   }
 }
 
@@ -173,7 +213,9 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
   const [filesHost, setFilesHost] = useState<HTMLElement | null>(null);
   const tipRef = useRef<HTMLDivElement>(null);
   const cbs = useRef({ onZoom, onReveal, onContext });
-  cbs.current = { onZoom, onReveal, onContext };
+  useLayoutEffect(() => {
+    cbs.current = { onZoom, onReveal, onContext };
+  });
 
   useEffect(() => {
     const map = ref.current;
@@ -182,24 +224,31 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
       setFilesHost(null);
       registry.clear();
       map.innerHTML = "";
-      const W = map.clientWidth, H = map.clientHeight;
+      const W = map.clientWidth,
+        H = map.clientHeight;
       if (W < 20 || H < 20) return;
       const items = childrenOf(tree);
       if (!items.length) {
         const e = document.createElement("div");
         e.className = "empty";
-        e.textContent = tree.items === 0 ? "This folder is empty." : "Nothing big enough to draw here.";
+        e.textContent =
+          tree.items === 0 ? "This folder is empty." : "Nothing big enough to draw here.";
         map.appendChild(e);
         return;
       }
       let i = 0;
       for (const r of squarify(items, W, H)) {
-        const gx = r.x > 0 ? GAP / 2 : 0, gy = r.y > 0 ? GAP / 2 : 0;
-        const gr = r.x + r.w < W - 0.5 ? GAP / 2 : 0, gb = r.y + r.h < H - 0.5 ? GAP / 2 : 0;
+        const gx = r.x > 0 ? GAP / 2 : 0,
+          gy = r.y > 0 ? GAP / 2 : 0;
+        const gr = r.x + r.w < W - 0.5 ? GAP / 2 : 0,
+          gb = r.y + r.h < H - 0.5 ? GAP / 2 : 0;
         draw(r.item.block, r.x + gx, r.y + gy, r.w - gx - gr, r.h - gy - gb, map, `${i++}`);
       }
       const host = map.querySelector<HTMLElement>(":scope > .files");
-      if (host) { host.classList.add("file-container"); setFilesHost(host); }
+      if (host) {
+        host.classList.add("file-container");
+        setFilesHost(host);
+      }
     };
     render();
     const ro = new ResizeObserver(render);
@@ -215,7 +264,7 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
   };
 
   const onClick = (e: React.MouseEvent) => {
-    const rv = (e.target as HTMLElement).closest?.(".rv") as HTMLElement | null;
+    const rv = (e.target as HTMLElement).closest<HTMLElement>(".rv");
     if (rv) {
       e.stopPropagation();
       const b = registry.get(rv.dataset.reveal ?? "");
@@ -224,8 +273,12 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
     }
     const hit = blockAt(e.target);
     if (!hit) return;
-    if (e.metaKey) { cbs.current.onReveal(hit.b.view.path); return; }
-    if (hit.b.kind === "files" || (hit.b.kind === "dir" && hit.el.classList.contains("zoom"))) cbs.current.onZoom(hit.b.view.path);
+    if (e.metaKey) {
+      cbs.current.onReveal(hit.b.view.path);
+      return;
+    }
+    if (hit.b.kind === "files" || (hit.b.kind === "dir" && hit.el.classList.contains("zoom")))
+      cbs.current.onZoom(hit.b.view.path);
   };
 
   const onContextMenu = (e: React.MouseEvent) => {
@@ -240,34 +293,46 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
     const tip = tipRef.current;
     if (!tip) return;
     const hit = blockAt(e.target);
-    if (!hit) { tip.hidden = true; return; }
-    const b = hit.b, v = b.view;
+    if (!hit) {
+      tip.hidden = true;
+      return;
+    }
+    const b = hit.b,
+      v = b.view;
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
     let html: string;
     if (b.kind === "files") {
-      html = `<b>${blockTitle(b)} directly in ${esc(v.name)}</b><div class="p">${esc(v.path)}</div><div class="r"><span>On disk</span><b>${fmt(v.loose_size)}</b>` +
+      html =
+        `<b>${blockTitle(b)} directly in ${esc(v.name)}</b><div class="p">${esc(v.path)}</div><div class="r"><span>On disk</span><b>${fmt(v.loose_size)}</b>` +
         (v.cloud ? `<span>In cloud</span><b>${fmt(v.loose_apparent)}</b>` : "") +
         `<span>Share of ${esc(v.name)}</span><b>${v.size ? Math.round((100 * v.loose_size) / v.size) : 0}%</b></div>` +
         `<div class="hint">Click to zoom in · ⌘-click or right-click to reveal ${esc(v.name)} in Finder</div>`;
     } else if (b.kind === "more") {
-      html = `<b>${blockTitle(b)} in ${esc(v.name)}</b><div class="p">${esc(v.path)}</div><div class="r"><span>On disk</span><b>${fmt(v.more_size)}</b>` +
+      html =
+        `<b>${blockTitle(b)} in ${esc(v.name)}</b><div class="p">${esc(v.path)}</div><div class="r"><span>On disk</span><b>${fmt(v.more_size)}</b>` +
         `<span>Share of ${esc(v.name)}</span><b>${v.size ? Math.round((100 * v.more_size) / v.size) : 0}%</b></div>` +
         `<div class="hint">Each is too small to draw at this zoom. Zoom into ${esc(v.name)} to see them.</div>`;
     } else {
       const zoomable = hit.el.classList.contains("zoom");
-      html = `<b>${esc(v.name)}</b><div class="p">${esc(v.path)}</div><div class="r"><span>On disk</span><b>${fmt(v.size)}</b>` +
+      html =
+        `<b>${esc(v.name)}</b><div class="p">${esc(v.path)}</div><div class="r"><span>On disk</span><b>${fmt(v.size)}</b>` +
         (v.cloud ? `<span>In cloud</span><b>${fmt(v.apparent)}</b>` : "") +
         `<span>Items</span><b>${fmtN(v.items)}</b>` +
         `<span>Level</span><b>${v.depth}</b>` +
-        (v.denied ? `<span>Unreadable</span><b>${fmtN(v.denied)} folder${v.denied === 1 ? "" : "s"}</b>` : "") +
+        (v.denied
+          ? `<span>Unreadable</span><b>${fmtN(v.denied)} folder${v.denied === 1 ? "" : "s"}</b>`
+          : "") +
         `</div>` +
-        (v.cloud && v.weight > v.size ? `<div class="hint">Drawn by cloud size: little or nothing of this is on disk.</div>` : "") +
+        (v.cloud && v.weight > v.size
+          ? `<div class="hint">Drawn by cloud size: little or nothing of this is on disk.</div>`
+          : "") +
         `<div class="hint">${zoomable ? "Click to zoom in · " : ""}⌘-click or right-click to reveal in Finder</div>`;
     }
     tip.innerHTML = html;
     tip.hidden = false;
     const r = tip.getBoundingClientRect();
-    let x = e.clientX + 14, y = e.clientY + 16;
+    let x = e.clientX + 14,
+      y = e.clientY + 16;
     if (x + r.width > window.innerWidth - 8) x = e.clientX - r.width - 10;
     if (y + r.height > window.innerHeight - 8) y = e.clientY - r.height - 10;
     tip.style.left = x + "px";
@@ -276,8 +341,22 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
 
   return (
     <>
-      <div className="map" ref={ref} onClick={onClick} onContextMenu={onContextMenu} onMouseMoveCapture={e => { if ((e.target as HTMLElement).closest(".file-list") && tipRef.current) tipRef.current.hidden = true; }} onMouseMove={onMove} onMouseLeave={() => { if (tipRef.current) tipRef.current.hidden = true; }} />
-      {filesHost && createPortal(<FileTable key={tree.path} path={tree.path} onReveal={onReveal} />, filesHost)}
+      <div
+        className="map"
+        ref={ref}
+        onClick={onClick}
+        onContextMenu={onContextMenu}
+        onMouseMoveCapture={(e) => {
+          if ((e.target as HTMLElement).closest(".file-list") && tipRef.current)
+            tipRef.current.hidden = true;
+        }}
+        onMouseMove={onMove}
+        onMouseLeave={() => {
+          if (tipRef.current) tipRef.current.hidden = true;
+        }}
+      />
+      {filesHost &&
+        createPortal(<FileTable key={tree.path} path={tree.path} onReveal={onReveal} />, filesHost)}
       <div className="tip" ref={tipRef} hidden />
     </>
   );

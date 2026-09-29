@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Wayne Davies
+// SPDX-License-Identifier: MIT (see LICENSE at the repository root)
+
 import { invoke } from "@tauri-apps/api/core";
 import type { AppInfo, Progress, View, FileEntry } from "./types";
 

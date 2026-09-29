@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Wayne Davies
+// SPDX-License-Identifier: MIT (see LICENSE at the repository root)
+
 /// Decimal units, as macOS reports them. Three significant figures at most.
 export function fmt(b: number): string {
   if (b >= 1e12) return (b / 1e12).toFixed(2).replace(/\.?0+$/, "") + " TB";

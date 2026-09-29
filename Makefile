@@ -10,12 +10,22 @@ export APPLE_SIGNING_IDENTITY
 SIGN_ID  := $(APPLE_SIGNING_IDENTITY)
 
 
-.PHONY: check test app install-app dmg dev icons screenshots sign-check
+.PHONY: check test lint fmt app install-app dmg dev icons screenshots sign-check
 
-## cargo test + TypeScript type-check.
-check:
+## cargo test + TypeScript type-check + lint.
+check: lint
 	cd src-tauri && cargo test --lib
 	npx tsc --noEmit -p tsconfig.json
+
+## rustfmt and clippy for the Rust; ESLint and Prettier for the TypeScript. Fails on any warning.
+lint:
+	cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings
+	npm run lint
+
+## Reformat everything in place (rustfmt, Prettier).
+fmt:
+	cd src-tauri && cargo fmt
+	npx prettier --write .
 
 test: check
 
