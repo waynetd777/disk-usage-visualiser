@@ -9,12 +9,18 @@ import { fmt, fmtN } from "./util";
 
 /// What one block stands for. Folders are `dir`; the files directly inside a folder are one
 /// `files` block, and folders too small to draw are one `more` block, so a folder's area is
-/// always its whole size.
+/// always its whole size. At the top of a whole-volume scan, `free` is the volume's free space,
+/// drawn beside the folders so the map shows the whole disk.
 export type Block =
-  { kind: "dir"; view: View } | { kind: "files"; view: View } | { kind: "more"; view: View };
+  | { kind: "dir"; view: View }
+  | { kind: "files"; view: View }
+  | { kind: "more"; view: View }
+  | { kind: "free"; view: View; bytes: number };
 
 interface Props {
   tree: View;
+  /// Free space to draw as a block of its own, or null for none.
+  free: number | null;
   onZoom: (path: string) => void;
   onReveal: (path: string) => void;
   onContext: (b: Block, x: number, y: number) => void;
@@ -115,6 +121,7 @@ function childrenOf(v: View): Item[] {
 }
 
 function blockTitle(b: Block): string {
+  if (b.kind === "free") return "Free space";
   if (b.kind === "files") return b.view.files === 1 ? "1 file" : `${fmtN(b.view.files)} files`;
   if (b.kind === "more")
     return b.view.more === 1 ? "1 more folder" : `${fmtN(b.view.more)} more folders`;
@@ -122,13 +129,14 @@ function blockTitle(b: Block): string {
 }
 
 function blockSize(b: Block): number {
+  if (b.kind === "free") return b.bytes;
   if (b.kind === "files") return b.view.loose_size;
   if (b.kind === "more") return b.view.more_size;
   return b.view.size;
 }
 
 function blockCloud(b: Block): number {
-  if (!b.view.cloud) return 0;
+  if (b.kind === "free" || !b.view.cloud) return 0;
   if (b.kind === "files") return b.view.loose_apparent;
   if (b.kind === "more") return b.view.more_apparent;
   return b.view.apparent;
@@ -208,7 +216,7 @@ function draw(b: Block, x: number, y: number, w: number, h: number, out: HTMLEle
   }
 }
 
-export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
+export default function Treemap({ tree, free, onZoom, onReveal, onContext }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [filesHost, setFilesHost] = useState<HTMLElement | null>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -228,6 +236,10 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
         H = map.clientHeight;
       if (W < 20 || H < 20) return;
       const items = childrenOf(tree);
+      if (free && free > 0 && items.length) {
+        items.push({ block: { kind: "free", view: tree, bytes: free }, size: free });
+        items.sort((a, b) => b.size - a.size);
+      }
       if (!items.length) {
         const e = document.createElement("div");
         e.className = "empty";
@@ -254,7 +266,7 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
     const ro = new ResizeObserver(render);
     ro.observe(map);
     return () => ro.disconnect();
-  }, [tree]);
+  }, [tree, free]);
 
   const blockAt = (t: EventTarget | null): { el: HTMLElement; b: Block } | null => {
     const el = (t as HTMLElement | null)?.closest?.(".blk") as HTMLElement | null;
@@ -272,7 +284,7 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
       return;
     }
     const hit = blockAt(e.target);
-    if (!hit) return;
+    if (!hit || hit.b.kind === "free") return;
     if (e.metaKey) {
       cbs.current.onReveal(hit.b.view.path);
       return;
@@ -285,6 +297,7 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
     const hit = blockAt(e.target);
     if (!hit) return;
     e.preventDefault();
+    if (hit.b.kind === "free") return;
     if (tipRef.current) tipRef.current.hidden = true;
     cbs.current.onContext(hit.b, e.clientX, e.clientY);
   };
@@ -301,7 +314,11 @@ export default function Treemap({ tree, onZoom, onReveal, onContext }: Props) {
       v = b.view;
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
     let html: string;
-    if (b.kind === "files") {
+    if (b.kind === "free") {
+      html =
+        `<b>Free space</b><div class="r"><span>Free</span><b>${fmt(b.bytes)}</b></div>` +
+        `<div class="hint">Room left on the disk. Hide it with the Free space button.</div>`;
+    } else if (b.kind === "files") {
       html =
         `<b>${blockTitle(b)} directly in ${esc(v.name)}</b><div class="p">${esc(v.path)}</div><div class="r"><span>On disk</span><b>${fmt(v.loose_size)}</b>` +
         (v.cloud ? `<span>In cloud</span><b>${fmt(v.loose_apparent)}</b>` : "") +

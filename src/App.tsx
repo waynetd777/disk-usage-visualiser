@@ -33,6 +33,23 @@ const RevealIcon = () => <span className="svgwrap" dangerouslySetInnerHTML={{ __
 /// Folders smaller than this share of the folder on screen are folded into a "more" block.
 const MIN_FRACTION = 1 / 4000;
 
+/// Whether the map draws the volume's free space, remembered between launches. On unless turned off.
+const FREE_KEY = "showFree";
+function loadShowFree(): boolean {
+  try {
+    return localStorage.getItem(FREE_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+function saveShowFree(on: boolean) {
+  try {
+    localStorage.setItem(FREE_KEY, on ? "1" : "0");
+  } catch {
+    // Not remembered; the toggle still works for this launch.
+  }
+}
+
 export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -41,6 +58,13 @@ export default function App() {
   const [treeError, setTreeError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ block: Block; x: number; y: number } | null>(null);
+  const [showFree, setShowFree] = useState(loadShowFree);
+  const toggleFree = useCallback(() => {
+    setShowFree((on) => {
+      saveShowFree(!on);
+      return !on;
+    });
+  }, []);
   const toastTimer = useRef<number | undefined>(undefined);
   const wasScanning = useRef(false);
   // Where you have been, like Finder's back and forward. Zooming pushes; a new root starts over.
@@ -306,6 +330,10 @@ export default function App() {
   // Whole-disk scans only: what statfs counts as used but no folder walk can reach.
   const notScanned =
     info && root === "/" && info.scan ? Math.max(0, info.volume.used - info.scan.size) : 0;
+  // Free space only means something beside a whole volume, so it is drawn at the top of a scan of
+  // `/` or of a disk under /Volumes, never inside a folder.
+  const volumeRoot = root === "/" || /^\/Volumes\/[^/]+$/.test(root);
+  const freeHere = volumeRoot && viewPath === root && info ? info.volume.free : 0;
   const showFdaBanner = info && !info.full_disk_access && (info.scan?.denied ?? 0) > 0;
 
   return (
@@ -375,6 +403,12 @@ export default function App() {
             <i />
             <span>Loose files</span>
           </div>
+          {showFree && volumeRoot && (
+            <div className="fr">
+              <i />
+              <span>Free space</span>
+            </div>
+          )}
         </div>
 
         <div className="spacer" />
@@ -463,6 +497,19 @@ export default function App() {
             )}
           </div>
           <div className="grow" />
+          <button
+            className={`btn toggle${showFree ? " on" : ""}`}
+            onClick={toggleFree}
+            aria-pressed={showFree}
+            title={
+              volumeRoot
+                ? `${showFree ? "Hide" : "Show"} the disk's free space in the map`
+                : "Free space is shown at the top of a whole-disk scan"
+            }
+          >
+            <span className="sw" />
+            <span>Free space</span>
+          </button>
           {scanning ? (
             <span className="pill info">
               Scanning{info?.scan ? ` · showing ${fmtWhen(info.scan.finished)} scan` : ""}
@@ -524,6 +571,7 @@ export default function App() {
           {tree ? (
             <Treemap
               tree={tree}
+              free={showFree && freeHere > 0 ? freeHere : null}
               onZoom={zoomTo}
               onReveal={reveal}
               onContext={(block, x, y) => setMenu({ block, x, y })}

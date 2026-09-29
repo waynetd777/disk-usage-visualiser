@@ -5,7 +5,7 @@ block, sized by what it takes up, so the big things are big.
 
 Built with Tauri 2, React and Rust.
 
-![The app showing /System/Library](docs/screenshots/app.png)
+![The app showing the whole disk, with its free space](docs/screenshots/app.png)
 
 ## What it does
 
@@ -14,6 +14,10 @@ Built with Tauri 2, React and Rust.
 - **Every folder is drawn**, nested, with its name and size where the block is big enough. The
   files sitting directly in a folder are one grey dashed block; folders too small to draw at the
   current zoom are folded into a "more folders" block, so a folder's area is always its total.
+- **Free space** is drawn as a dotted green block beside the folders at the top of a whole-disk
+  scan (the boot volume, or a disk under `/Volumes`), so the map shows the whole disk. It is on by
+  default; the **Free space** switch in the title bar hides it, and the app remembers the choice.
+  It is not drawn inside a folder, or for a scan of a single folder.
 - **Colour is nesting level**, in rainbow order: level 1 red, level 2 orange, amber, green, teal,
   blue, indigo, violet. The level is counted from the scan root, so it does not change as you zoom.
 - **Cloud folders** (OneDrive, iCloud Drive: anything under `~/Library/CloudStorage` or

@@ -15,12 +15,18 @@
 //! * `apparent` — logical bytes (`st_size`). For a cloud folder this is what is in the cloud,
 //!   whether or not it is also on disk, and the UI shows it beside `size`.
 //!
+//! A file with several hard links is counted once, in the first folder the walk reaches it
+//! from, as `du` does; its other links count as files but add no bytes. Spotlight's journals
+//! under ~/Library/Metadata/CoreSpotlight are linked into up to ten folders each, so counting
+//! every link put a 60 GB store on the map at 250 GB.
+//!
 //! The walk is one rayon task per directory, which keeps every core busy on an SSD and is
 //! naturally work-stealing on a lopsided tree. Progress is a handful of atomics the UI polls;
 //! cancellation is an AtomicBool checked before every directory is opened.
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -75,6 +81,9 @@ pub struct Progress {
     pub denied: AtomicU64,
     pub current: Mutex<String>,
     pub cancel: AtomicBool,
+    /// (device, inode) of every multiply-linked file seen so far. Only files with more than one
+    /// link go in, so the lock is rarely taken.
+    pub linked: Mutex<HashSet<(u64, u64)>>,
 }
 
 impl Progress {
@@ -87,6 +96,19 @@ impl Progress {
         if let Ok(mut c) = self.current.lock() {
             c.clear();
         }
+        if let Ok(mut l) = self.linked.lock() {
+            *l = HashSet::new();
+        }
+    }
+
+    /// Whether this is the first link to the file the walk has met. Always true for a file with
+    /// one link.
+    fn first_link(&self, md: &fs::Metadata) -> bool {
+        md.nlink() <= 1
+            || self
+                .linked
+                .lock()
+                .map_or(true, |mut l| l.insert((md.dev(), md.ino())))
     }
 }
 
@@ -150,8 +172,10 @@ pub fn walk(dir: &Path, name: String, cloud: bool, prog: &Progress) -> Option<No
         } else if let Ok(md) = e.metadata() {
             // DirEntry::metadata is an lstat: a symlink counts as itself, never its target.
             files += 1;
-            la += md.len();
-            ls += md.blocks() * 512;
+            if prog.first_link(&md) {
+                la += md.len();
+                ls += md.blocks() * 512;
+            }
         }
     }
     prog.items
@@ -315,6 +339,41 @@ mod tests {
         let v = view(&n, "/x", 0, u64::MAX, 10);
         assert_eq!((v.kids.len(), v.more), (0, 2));
         assert_eq!(v.more_weight, n.kids.iter().map(weight).sum::<u64>());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hard_links_count_once() {
+        let dir = std::env::temp_dir().join(format!("duv-links-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("a")).unwrap();
+        fs::create_dir_all(dir.join("b")).unwrap();
+        fs::write(dir.join("a/f"), vec![b'x'; 9000]).unwrap();
+        fs::hard_link(dir.join("a/f"), dir.join("b/f")).unwrap();
+        fs::hard_link(dir.join("a/f"), dir.join("b/g")).unwrap();
+        let prog = Progress::default();
+        let n = walk(&dir, "root".into(), false, &prog).unwrap();
+        assert_eq!(n.apparent, 9000, "three links, one file");
+        assert_eq!(n.kids.iter().map(|k| k.files).sum::<u64>(), 3);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn symlinks_are_not_followed() {
+        let dir = std::env::temp_dir().join(format!("duv-symlinks-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("real")).unwrap();
+        fs::write(dir.join("real/f"), vec![b'x'; 90_000]).unwrap();
+        std::os::unix::fs::symlink(dir.join("real/f"), dir.join("file-link")).unwrap();
+        std::os::unix::fs::symlink(dir.join("real"), dir.join("dir-link")).unwrap();
+        let prog = Progress::default();
+        let n = walk(&dir, "root".into(), false, &prog).unwrap();
+        assert_eq!(n.kids.len(), 1, "a link to a folder is not walked into");
+        assert!(
+            n.apparent < 90_000 + 1000,
+            "a link counts as itself, not its target"
+        );
+        assert_eq!(n.files, 2, "both links count as files in the root");
         let _ = fs::remove_dir_all(dir);
     }
 
