@@ -105,7 +105,16 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
     big_mode = str(h.cfg.get("hooks", "big_read_mode", default="off"))
     big_threshold = int(h.cfg.get("hooks", "big_read_tokens", default=2000) or 2000)
     size_tokens = tokens or _size_tokens(h, raw_path, rel)
-    big = (big_mode == "deny" and not h.subagent and size_tokens >= big_threshold)
+    # Subagents too. They were exempt from the start, with no reason recorded,
+    # and in the first month of the default being on they made four in five
+    # of the whole-file reads that still got through: an Explore agent pays
+    # for a file it reads whole on every one of its own later turns, just as
+    # the parent would. A subagent's refusal is its own, keyed by agent, so
+    # the parent's refusal of a file does not wave the subagent through, nor
+    # the reverse.
+    big = big_mode == "deny" and size_tokens >= big_threshold
+    agent = str(h.payload.get("agent_id") or h.payload.get("agent_type") or "").strip()
+    refused_key = "{}:{}".format(agent, rel) if h.subagent and agent else rel
 
     out: Dict[str, Any] = {"deny": False, "text": None, "event": None, "big": False}
 
@@ -140,8 +149,8 @@ def main(h: "_common.HookCtx") -> Optional[Dict[str, Any]]:
         # placeholder entry there would be counted as one by session_end and
         # compared as one by both duplicate checks.
         refused = state.setdefault("big_read_refused", {})
-        if big and not refused.get(rel):
-            refused[rel] = True
+        if big and not refused.get(refused_key):
+            refused[refused_key] = True
             out["deny"] = True
             out["big"] = True
             out["event"] = "big_read_denied"

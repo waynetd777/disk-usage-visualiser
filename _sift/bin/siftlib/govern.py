@@ -64,7 +64,10 @@ _BUILD_RE = re.compile(r"^(?:tsc|webpack|rollup|esbuild|make|cmake|ninja|mvn|(?:
                        r"|vite\s+build|next\s+build|cargo\s+build|go\s+build|dotnet\s+build"
                        r"|(?:npm|yarn|pnpm|bun)\s+(?:run\s+)?build|docker\s+(?:compose\s+)?build"
                        r"|swift\s+build|xcodebuild)\b")
-_ENV_PREFIX_RE = re.compile(r"^(?:\w+=\S*\s+)*")
+# Quoted values too: `W="a dir/with spaces" python3 x.py` is python3, and the
+# unquoted form took `dir/with` for the command and kept a path fragment as
+# its ledger label.
+_ENV_PREFIX_RE = re.compile(r"""^(?:\w+=(?:"[^"]*"|'[^']*'|\S*)\s+)*""")
 # What may run in front of the real command without changing what it is.
 _RUNNER_PREFIX_RE = re.compile(
     r"^(?:(?:time|env|nice|command|exec|sudo)\s+"
@@ -96,10 +99,107 @@ def estimate_tokens(text: str) -> int:
     return -(-len(text) * 2 // 7)
 
 
-# `;`, `&&`, `||` and newlines start a new command. A pipe does not: in
-# `grep x . | head -50` the head of the pipeline is what produces the output
-# and the rest only filters it, which is already the behaviour we want.
-_SEGMENT_RE = re.compile(r"(?:;|&&|\|\||\n)")
+# A heredoc's opening line, `<<'EOF'`, `<<-EOF` or `<< "EOF"`.
+_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1")
+# Shell keywords that open a body: what follows them on the segment is the
+# command. `for x in ...`, `done`, `fi` and the like print nothing themselves.
+_KEYWORD_PREFIX_RE = re.compile(r"^(?:(?:do|then|else|if|elif|while|until|\{|\()\s+)+")
+_KEYWORD_ONLY = {"done", "fi", "esac", "}", ")", "do", "then", "else", "for",
+                 "select", "case"}
+_ASSIGNMENT_RE = re.compile(r"""^(?:\w+=(?:"[^"]*"|'[^']*'|\S*)\s*)+$""")
+
+
+def _strip_heredocs(command: str) -> str:
+    """The command with every heredoc body removed, opening lines kept.
+
+    A body is input, not commands. Split on newlines with the rest, the lines
+    of `python3 - <<'EOF'` became "commands" called `import` and `print(`, so
+    a chain containing one was unknown whatever else it ran, and its label in
+    the ledger was a line of somebody's script.
+    """
+    lines = command.split("\n")
+    out = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        for match in _HEREDOC_RE.finditer(line):
+            tag = match.group(2)
+            while i < len(lines) and lines[i].strip() != tag:
+                i += 1
+            i += 1
+    return "\n".join(out)
+
+
+def _split_unquoted(text: str, separators: "tuple[str, ...]") -> "list[str]":
+    """Split on any of `separators` outside quotes, longest first.
+
+    The regex split cut inside quotes: `grep -n "a\\|b" f` became a pipe into
+    a program called `b"`, which is not a filter, so the commonest grep
+    alternation was classified unknown and never condensed.
+    """
+    parts, buf, quote, i = [], [], "", 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            buf.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < len(text):
+                buf.append(text[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < len(text):
+            buf.append(text[i:i + 2])
+            i += 2
+            continue
+        if ch in "'\"":
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        for sep in separators:
+            if text.startswith(sep, i):
+                parts.append("".join(buf))
+                buf = []
+                i += len(sep)
+                break
+        else:
+            buf.append(ch)
+            i += 1
+    parts.append("".join(buf))
+    return parts
+
+
+def _segments(command: str) -> "list[list[str]]":
+    """The commands in a chain, each as its pipeline's stages.
+
+    `;`, `&&`, `||` and newlines start a new command. A pipe does not: in
+    `grep x . | head -50` the head of the pipeline is what produces the output
+    and the rest only filters it, which is already the behaviour we want.
+
+    Heredoc bodies removed, separators inside quotes ignored, and the shell's
+    own keywords taken off: `for f in *.py; do sed -n 1,40p "$f"; done` is a
+    chain of `sed`, not of `for`, `do` and `done`. Segments that print nothing
+    by construction -- a loop header, a closing keyword, a bare assignment such
+    as `S=/some/dir` -- are dropped.
+    """
+    out = []
+    for seg in _split_unquoted(_strip_heredocs(command or ""),
+                               ("&&", "||", ";", "\n")):
+        seg = _KEYWORD_PREFIX_RE.sub("", seg.strip())
+        words = seg.split()
+        if not words or words[0] in _KEYWORD_ONLY:
+            continue
+        if _ASSIGNMENT_RE.match(seg):
+            continue
+        stages = [st for st in _split_unquoted(seg, ("|",)) if st.strip()]
+        if stages:
+            out.append(stages)
+    return out
 
 
 def _classify_one(segment: str) -> str:
@@ -128,13 +228,17 @@ def command_label(command: str) -> str:
 
     Recorded on a passed-through flood so the ledger can say which commands
     flood, not only that `unknown` ones do. `cd <dir> &&` segments are skipped,
-    as they print nothing; an interpreter or runner is named with its script's
+    as they print nothing, and so are banners like `echo ---` when anything
+    else ran; an interpreter or runner is named with its script's
     basename or its subcommand (`python3 candidates.py`, `npm run`), and a
     path is never kept whole, since the ledger must not carry one out of the
     repo.
     """
-    for segment in _SEGMENT_RE.split(command or ""):
-        words = _ENV_PREFIX_RE.sub("", segment.strip(), count=1).split()
+    segments = _segments(command)
+    # A banner is no name for a chain: `echo ---; sed -n ...` is a sed.
+    loud = [seg for seg in segments if _first_word(seg[0]) not in _QUIET]
+    for stages in loud or segments:
+        words = _ENV_PREFIX_RE.sub("", stages[0].strip(), count=1).split()
         if not words or words[0] == "cd":
             continue
         head = re.split(r"[\\/]", words[0])[-1]
@@ -145,6 +249,9 @@ def command_label(command: str) -> str:
             rest = [w for w in words[1:] if not w.startswith("-")]
             if rest[:1] == ["run"] and len(rest) > 1:
                 rest = rest[1:]
+            if rest[:1] and rest[0].startswith("<<"):
+                # A script on stdin: the heredoc's tag is no name for it.
+                return "{} <<".format(head)
             if rest:
                 return "%s %s" % (head, re.split(r"[\\/]", rest[0])[-1][:40])
         return head[:40]
@@ -182,24 +289,22 @@ def classify(command: str) -> str:
     cmd = command.strip()
     if not cmd:
         return "unknown"
-    segments = [seg for seg in _SEGMENT_RE.split(cmd) if seg.strip()]
-    stages = [st for seg in segments for st in seg.split("|") if st.strip()]
-    heads = [_head(st) for st in stages]
+    segments = _segments(cmd)
+    heads = [_head(st) for seg in segments for st in seg]
     if any(_TEST_RE.match(h) for h in heads):
         return "test"
     if any(_BUILD_RE.match(h) for h in heads):
         return "build"
     families = []
-    for seg in segments:
-        parts = [p for p in seg.split("|") if p.strip()]
-        family = _classify_one(parts[0]) if parts else "unknown"
+    for parts in segments:
+        family = _classify_one(parts[0])
         # A pipe into a program, not a filter, is that program's output:
         # `cat f | python3 check.py` prints what the script prints.
         if any(_first_word(p) not in _FILTERS for p in parts[1:]):
             family = "unknown"
-        if family == "unknown" and _first_word(seg) in _QUIET:
+        if family == "unknown" and _first_word(parts[0]) in _QUIET:
             continue
-        if family == "unknown" and len(segments) > 1 and _first_word(seg) in _INSPECT:
+        if family == "unknown" and len(segments) > 1 and _first_word(parts[0]) in _INSPECT:
             # Listings, not results: cut with the rest, as before.
             family = "file_print"
         families.append(family)
