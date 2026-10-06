@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import Dict, NamedTuple, Optional
 
@@ -48,8 +49,10 @@ DEFAULTS = {
 
 _GREP_RE = re.compile(r"^(grep|egrep|fgrep|rg|ag|ack)\b")
 _PRINT_RE = re.compile(r"^(cat|head|tail|sed|nl|bat)\b")
-_GIT_SHOW_RE = re.compile(r"^git\s+(?:-[A-Za-z]\s+\S+\s+|-\S+\s+"
-                          r"|--\S+(?:[= ]\S+)?\s+)*(show|diff|log)\b")
+# git's global options that take their value as the next word. Everything
+# else before the subcommand is a flag on its own, `--flag=value` included.
+_GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
+_GIT_SHOW_SUBCOMMAND_RE = re.compile(r"(?:show|diff|log)\b")
 # Test and build runners, matched at the head of a command -- after any
 # environment assignments and runner prefix (`python3 -m`, `uv run`, `npx`) --
 # never anywhere in it. Matched anywhere, `grep -rn pytest src/` and
@@ -106,7 +109,14 @@ _HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1")
 _KEYWORD_PREFIX_RE = re.compile(r"^(?:(?:do|then|else|if|elif|while|until|\{|\()\s+)+")
 _KEYWORD_ONLY = {"done", "fi", "esac", "}", ")", "do", "then", "else", "for",
                  "select", "case"}
-_ASSIGNMENT_RE = re.compile(r"""^(?:\w+=(?:"[^"]*"|'[^']*'|\S*)\s*)+$""")
+# A value is a run of pieces each told apart by its first character, and
+# assignments are separated by mandatory whitespace, so a line can be read as
+# assignments only one way. Overlapping alternatives inside a repeat -- `\S*`
+# also matching `""`, and an optional separator -- backtracked exponentially
+# on `0=0=0=...` and `A="" A="" ... x`, and this runs on every hooked command.
+_ASSIGN_VALUE = r"""(?:"[^"]*"|'[^']*'|[^\s"'])*"""
+_ASSIGNMENT_RE = re.compile(
+    r"^\w+=" + _ASSIGN_VALUE + r"(?:\s+\w+=" + _ASSIGN_VALUE + r")*\s*$")
 
 
 def _strip_heredocs(command: str) -> str:
@@ -202,12 +212,31 @@ def _segments(command: str) -> "list[list[str]]":
     return out
 
 
+def _is_git_show(command: str) -> bool:
+    """Whether `command` is `git show`, `git diff` or `git log`, global options and all.
+
+    Tokenized rather than matched: the regex this replaces had overlapping
+    alternatives inside a repeat and backtracked exponentially on
+    `git --! --! --! ...`, hanging the hook on one crafted command line.
+    """
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = command.split()
+    if not words or words[0] != "git":
+        return False
+    i = 1
+    while i < len(words) and words[i].startswith("-"):
+        i += 2 if words[i] in _GIT_VALUE_OPTS else 1
+    return i < len(words) and bool(_GIT_SHOW_SUBCOMMAND_RE.match(words[i]))
+
+
 def _classify_one(segment: str) -> str:
     """The family of a single command, by what it starts with."""
     head = _ENV_PREFIX_RE.sub("", segment.strip(), count=1).lstrip()
     if not head:
         return "unknown"
-    if _GIT_SHOW_RE.match(head):
+    if _is_git_show(head):
         return "git_show"
     if _GREP_RE.match(head):
         return "grep_flood"

@@ -35,7 +35,10 @@ _RS = [
 ]
 _JVM = [
     (r"^\s{0,4}(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?(?:abstract\s+)?(?:class|interface|enum|object|data class)\s+(\w+)", "class"),
-    (r"^\s{4}(?:public|private|protected)?\s*(?:static\s+)?(?:suspend\s+)?(?:fun\s+|[\w<>\[\], ]+\s+)(\w+)\s*\(", "fn"),
+    # The return type is words split by whitespace, not a class that also holds
+    # spaces: that overlapped the `\s` either side and went cubic on a line of
+    # blanks, which `map` and the read hook meet in any indented file.
+    (r"^\s{4}(?:public|private|protected)?\s*(?:static\s+)?(?:suspend\s+)?(?:fun\s+|[\w<>\[\],]+(?:\s+[\w<>\[\],]+)*\s+)(\w+)\s*\(", "fn"),
 ]
 _MD = [(r"^##?\s+(.+)$", "section")]
 

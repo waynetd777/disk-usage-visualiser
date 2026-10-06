@@ -107,7 +107,9 @@ HR_PATTERNS = [
     re.compile(r"(?i)\b(salary|remuneration|compensation|day ?rate|rate ?card|"
                r"cost to company|\bCTC\b|headcount cost|bonus|equity grant)\b"
                r"[^\n]{0,40}?(?:[R$£€]\s?\d|\d{3})"),
-    re.compile(r"(?i)(?:[R$£€]\s?\d|\d{3})[\d ,.]*[^\n]{0,40}?\b(salary|remuneration|"
+    # The amount's tail is bounded: unbounded, it and the 40-character window
+    # overlapped and a long run of digits took a minute to search.
+    re.compile(r"(?i)(?:[R$£€]\s?\d|\d{3})[\d ,.]{0,30}[^\n]{0,40}?\b(salary|remuneration|"
                r"compensation|day ?rate|rate ?card|cost to company|\bCTC\b|"
                r"per annum|p\.?a\.?)\b"),
 ]
