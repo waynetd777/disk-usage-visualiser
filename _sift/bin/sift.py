@@ -217,7 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
             "whether the knowledge is read",
             "sift ledger", "sift ledger -v", "sift ledger --all --verbose",
             "sift ledger --since 30.days",
-            "sift ledger --repo ~/Projects/sftx-os")
+            "sift ledger --repo ~/Projects/other-app")
     # The output is terse by design; the glossary that makes it readable lives
     # here, in `sift ledger --help`, not in every run. One line per metric, in
     # the order they print.

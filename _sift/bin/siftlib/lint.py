@@ -65,7 +65,7 @@ SECRET_PATTERNS = [
 
 # The character before the path may be anything that cannot itself be part of
 # a path. Listing the openers instead -- whitespace, quote, paren -- missed the
-# one form a model actually writes in markdown: `` `/Users/wayned/notes` ``
+# one form a model actually writes in markdown: `` `/Users/maya/notes` ``
 # passed `lint --staged` clean, and so did `path=/Users/...` and `at: ~/x`,
 # which is a hard-fail privacy check failing open on its normal case.
 ABSOLUTE_PATTERNS = [
