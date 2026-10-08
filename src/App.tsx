@@ -5,6 +5,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { open as pickFolder } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api } from "./api";
+import Ask from "./Ask";
+import HelpDrawer from "./Help";
+import Tooltips from "./Tooltips";
+import { describeView } from "./context";
+import { useAssistant } from "./assistant";
 import { hideSplash } from "./main";
 import Treemap, { REVEAL, type Block } from "./Treemap";
 import type { AppInfo, Progress, View } from "./types";
@@ -21,6 +26,32 @@ const RELOAD_ICON = (
   >
     <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
     <path d="M13.6 1.8v3.4h-3.4" />
+  </svg>
+);
+const ASK_ICON = (
+  <svg
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M2.5 3.5A1.5 1.5 0 0 1 4 2h8a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 12 11H7l-3.2 2.7V11H4a1.5 1.5 0 0 1-1.5-1.5z" />
+  </svg>
+);
+const HELP_ICON = (
+  <svg
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <circle cx="8" cy="8" r="6.2" />
+    <path d="M6.2 6.3a1.9 1.9 0 1 1 2.7 1.7c-.6.3-.9.7-.9 1.3" />
+    <path d="M8 11.4h.01" />
   </svg>
 );
 const STOP_ICON = (
@@ -59,6 +90,20 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ block: Block; x: number; y: number } | null>(null);
   const [showFree, setShowFree] = useState(loadShowFree);
+  const [askOpen, setAskOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  // A question Help hands to Ask, typed into its box; `n` makes a repeat of the same text count.
+  const [askSeed, setAskSeed] = useState<{ text: string; n: number } | null>(null);
+  // Ask and Help share the right edge, so opening one closes the other.
+  const openAsk = useCallback((on: boolean) => {
+    setAskOpen(on);
+    if (on) setHelpOpen(false);
+  }, []);
+  const openHelp = useCallback((on: boolean) => {
+    setHelpOpen(on);
+    if (on) setAskOpen(false);
+  }, []);
+  const assistant = useAssistant();
   const toggleFree = useCallback(() => {
     setShowFree((on) => {
       saveShowFree(!on);
@@ -262,7 +307,8 @@ export default function App() {
     }
   }, [info, scanning, startScan]);
 
-  // Shortcuts: ⌘R rescan, ⌘O choose a folder, ⌘↑ / Esc up a level, ⌘⇧R reveal the folder on screen.
+  // Shortcuts: ⌘R rescan, ⌘O choose a folder, ⌘↑ / Esc up a level, ⌘⇧R reveal the folder on
+  // screen, ⌘K Ask.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -270,11 +316,29 @@ export default function App() {
           setMenu(null);
           return;
         }
+        if (askOpen) {
+          setAskOpen(false);
+          return;
+        }
+        if (helpOpen) {
+          setHelpOpen(false);
+          return;
+        }
         up();
         return;
       }
+      // ? outside a text box opens and closes the help, with or without ⌘.
+      if (e.key === "?" && !e.ctrlKey && !e.altKey) {
+        if ((e.target as HTMLElement)?.closest?.("input, textarea, select")) return;
+        e.preventDefault();
+        openHelp(!helpOpen);
+        return;
+      }
       if (!e.metaKey) return;
-      if (e.key === "r" && !e.shiftKey) {
+      if (e.key === "k") {
+        e.preventDefault();
+        if (assistant.available) openAsk(!askOpen);
+      } else if (e.key === "r" && !e.shiftKey) {
         e.preventDefault();
         if (!scanning) startScan();
       } else if ((e.key === "R" || e.key === "r") && e.shiftKey) {
@@ -296,7 +360,22 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [menu, up, back, forward, scanning, startScan, viewPath, reveal, chooseFolder]);
+  }, [
+    menu,
+    askOpen,
+    helpOpen,
+    openAsk,
+    openHelp,
+    assistant.available,
+    up,
+    back,
+    forward,
+    scanning,
+    startScan,
+    viewPath,
+    reveal,
+    chooseFolder,
+  ]);
 
   useEffect(() => {
     if (!menu) return;
@@ -335,6 +414,11 @@ export default function App() {
   const volumeRoot = root === "/" || /^\/Volumes\/[^/]+$/.test(root);
   const freeHere = volumeRoot && viewPath === root && info ? info.volume.free : 0;
   const showFdaBanner = info && !info.full_disk_access && (info.scan?.denied ?? 0) > 0;
+  // What Ask puts to Claude: the folder on screen, as it is when the question is sent.
+  const askContext = useCallback(
+    () => (tree && info ? { path: tree.path, text: describeView(tree, info) } : null),
+    [tree, info],
+  );
 
   return (
     <div className="app">
@@ -532,6 +616,28 @@ export default function App() {
               <span>Reload</span>
             </button>
           )}
+          {/* A disabled button gets no pointer events, so the reason sits on a wrapper. */}
+          <span className="tipwrap" title={assistant.reason ?? undefined}>
+            <button
+              className={`btn${askOpen ? " on" : ""}`}
+              disabled={!assistant.available}
+              onClick={() => openAsk(!askOpen)}
+              aria-pressed={askOpen}
+              title="Ask an AI where space can be reclaimed (⌘K)"
+            >
+              {ASK_ICON}
+              <span>Ask</span>
+            </button>
+          </span>
+          <button
+            className={`btn${helpOpen ? " on" : ""}`}
+            onClick={() => openHelp(!helpOpen)}
+            aria-pressed={helpOpen}
+            aria-label="Help"
+            title="Help (?)"
+          >
+            {HELP_ICON}
+          </button>
         </div>
 
         {scanning && progress && (
@@ -600,6 +706,17 @@ export default function App() {
         />
       )}
       {toast && <div className="toast">{toast}</div>}
+      <Ask open={askOpen} onClose={() => setAskOpen(false)} context={askContext} seed={askSeed} />
+      <HelpDrawer
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        onAsk={(text) => {
+          if (!assistant.available) return;
+          setAskSeed({ text, n: Date.now() });
+          openAsk(true);
+        }}
+      />
+      <Tooltips />
     </div>
   );
 }

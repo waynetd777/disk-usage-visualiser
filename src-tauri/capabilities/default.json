@@ -16,6 +16,7 @@
     "window-state:default",
     "dialog:allow-open",
     "dialog:allow-message",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-write-html"
   ]
 }

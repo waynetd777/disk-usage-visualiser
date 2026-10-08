@@ -1055,3 +1055,396 @@ pre,
   color: var(--muted);
   white-space: normal;
 }
+
+/* Ask: a chat panel over the right of the map. Hidden, not unmounted, so a chat survives closing. */
+.ask {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(440px, 80vw);
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--text);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+}
+.ask[hidden] {
+  display: none;
+}
+.ask-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.ask-head select.btn {
+  appearance: auto;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+}
+.ask-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.ask-intro p {
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+.ask-intro code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-all;
+}
+.ask-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+.chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ask-q {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 7px 11px;
+  border-radius: 12px 12px 3px 12px;
+  background: var(--accent-soft);
+  white-space: pre-wrap;
+  user-select: text;
+}
+.ask-turn {
+  align-self: stretch;
+  position: relative;
+}
+.ask-a {
+  align-self: stretch;
+  user-select: text;
+}
+/* Copy sits under the answer, out of the way until the answer is hovered. */
+.ask-copy {
+  margin-top: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.ask-turn:hover .ask-copy,
+.ask-copy:focus-visible {
+  opacity: 1;
+}
+.btn:disabled {
+  cursor: default;
+}
+.ask-a.error {
+  color: var(--bad);
+}
+.ask-a p,
+.ask-a ul,
+.ask-a ol,
+.ask-a pre {
+  margin: 0 0 8px;
+}
+.ask-a h3,
+.ask-a h4,
+.ask-a h5,
+.ask-a h6 {
+  margin: 10px 0 4px;
+  font-size: 13px;
+}
+.ask-a ul,
+.ask-a ol {
+  padding-left: 20px;
+}
+.ask-a li {
+  margin: 2px 0;
+}
+.ask-a code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+  word-break: break-all;
+}
+.ask-a pre {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow: auto;
+}
+.ask-a pre code {
+  border: 0;
+  padding: 0;
+  background: none;
+  word-break: normal;
+}
+.ask-a.working {
+  color: var(--muted);
+}
+.ask-a.working .dots i {
+  font-style: normal;
+  animation: ask-dot 1.2s infinite;
+  opacity: 0.2;
+}
+.ask-a.working .dots i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.ask-a.working .dots i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes ask-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.ask-input {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.ask-input textarea {
+  flex: 1;
+  resize: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+.ask-input textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.btn.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* The app's own tooltip, in place of macOS's; Tooltips.tsx positions it inside the window. */
+.tip {
+  position: fixed;
+  z-index: 80;
+  max-width: 300px;
+  padding: 5px 9px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 500;
+  pointer-events: none;
+  white-space: pre-line;
+  word-break: break-word;
+  animation: tipin 0.12s ease-out;
+}
+@keyframes tipin {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* A wrapper that carries a disabled control's tooltip; it takes no room of its own. */
+.tipwrap {
+  display: inline-flex;
+}
+
+/* Help: the user guide in a drawer over the right of the map, like Ask (they never show together). */
+.help {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(460px, 80vw);
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--text);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+}
+.help[hidden] {
+  display: none;
+}
+.help-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.help-sub {
+  color: var(--muted);
+}
+.help-search {
+  padding: 10px 12px 0;
+}
+.help-search input {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+.help-search input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.help-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 16px;
+  font-size: 13px;
+}
+.help-foot {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.help-text {
+  line-height: 1.5;
+  user-select: text;
+}
+.help-text p,
+.help-text ul,
+.help-text ol,
+.help-text table,
+.help-text blockquote {
+  margin: 0 0 8px;
+}
+.help-text ul,
+.help-text ol {
+  padding-left: 18px;
+}
+.help-text li {
+  margin: 2px 0;
+}
+.help-text h4 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+}
+.help-text strong {
+  font-weight: 600;
+}
+.help-text code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.help-text a {
+  color: var(--accent);
+}
+.help-text table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.help-text th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--panel-2);
+}
+.help-text th,
+.help-text td {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  vertical-align: top;
+}
+.help-text blockquote {
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--panel-2);
+  border-radius: 6px;
+  color: var(--muted);
+}
+.help-sec {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 0;
+}
+.help-sec summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+  padding: 2px 0;
+}
+.help-sec summary::-webkit-details-marker {
+  display: none;
+}
+.help-sec .help-text {
+  padding: 4px 0 2px 18px;
+}
+.help-chev {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+.help-sec[open] > summary .help-chev {
+  transform: rotate(90deg);
+}
+.help-none {
+  color: var(--muted);
+  margin: 0;
+}

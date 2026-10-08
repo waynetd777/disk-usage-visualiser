@@ -4,7 +4,24 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AppInfo, Progress, View, FileEntry } from "./types";
 
+export interface Cli {
+  path: string | null;
+  version: string | null;
+  models: { id: string; name: string }[];
+}
+export interface AssistantStatus {
+  claude: Cli;
+  codex: Cli;
+  antigravity: Cli;
+  copilot: Cli;
+}
+
 export const api = {
+  assistantStatus: () => invoke<AssistantStatus>("assistant_status"),
+  /// Puts a question to Claude Code; the answer arrives as `ask-chunk` and `ask-done` events.
+  ask: (chatId: string, prompt: string, model: string, session: string | null) =>
+    invoke<void>("ask", { chatId, prompt, model, session }),
+  askCancel: (chatId: string) => invoke<void>("ask_cancel", { chatId }),
   files: (path: string) => invoke<FileEntry[]>("get_files", { path }),
   state: () => invoke<AppInfo>("get_state"),
   progress: () => invoke<Progress>("get_progress"),

@@ -9,6 +9,8 @@ Built with Tauri 2, React and Rust.
 
 ## What it does
 
+The user guide is [docs/guide.md](docs/guide.md); it is also the app's help (press `?`).
+
 - **Pick a folder**, or take the whole boot volume (the default). The five most recent roots sit in
   the sidebar.
 - **Every folder is drawn**, nested, with its name and size where the block is big enough. The
@@ -31,12 +33,21 @@ Built with Tauri 2, React and Rust.
   the folder contains only files. A Finder-style table lists Name, Date Modified, Size, On Disk
   and Kind. Search by filename using the box at the top, click a column heading to sort, and
   double-click a file or use its arrow to reveal it in Finder. Search covers files directly in
-  this folder; it does not search subfolders.
+  this folder; it does not search subfolders. A folder with thousands of files loads a page at a
+  time as you scroll.
 - **Reveal in Finder**: the arrow on a block's header, ⌘-click on the block, right-click for a menu
   (Reveal in Finder, Zoom in, Copy path, Get Info…), or the arrow beside the breadcrumb for the
   folder on screen. ⌘⇧R does the same.
 - **Reload** re-scans (⌘R). While a scan runs the button reads **Stop**; stopping keeps the last
   completed scan on screen. There is no pause.
+- **Ask** (⌘K) opens a chat about the folder on screen: it puts the scan to an AI and asks where
+  space can be reclaimed safely, with suggested questions to start from. It runs through an AI
+  command-line tool already installed and signed in on the Mac (Claude Code, Codex, Antigravity or
+  GitHub Copilot; no key is set up in the app), the model menu lists every model they offer, and
+  each answer has a **Copy** button for pasting as text or formatted text. The AI sees names, paths
+  and sizes only, and the app deletes nothing.
+- **Help** (`?`) opens the user guide in a drawer beside the map, searchable, with a button to
+  hand a question on to Ask.
 
 ## Scanning
 

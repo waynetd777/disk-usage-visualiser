@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Wayne Davies
 // SPDX-License-Identifier: MIT (see LICENSE at the repository root)
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import type { FileEntry } from "./types";
 import { fmt, fmtN } from "./util";
@@ -15,6 +15,9 @@ const columns = [
 ] as const;
 type SortKey = (typeof columns)[number][0];
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+// Rows are added to the table in pages as the list is scrolled: a folder with thousands of files
+// would otherwise freeze the app while every row is laid out at once.
+const PAGE = 120;
 
 export default function FileTable({
   path,
@@ -62,6 +65,20 @@ export default function FileTable({
         }),
     [files, query, sort],
   );
+  // How many rows are in the table so far, kept with the rows it counts, so a new listing, filter
+  // or sort starts over from one page.
+  const [page, setPage] = useState<{ rows: FileEntry[]; shown: number }>();
+  const shown = page?.rows === rows ? page.shown : PAGE;
+  const scroller = useRef<HTMLDivElement>(null);
+  const extend = () => {
+    const el = scroller.current;
+    if (el && shown < rows.length && el.scrollTop + el.clientHeight >= el.scrollHeight - 400) {
+      setPage({ rows, shown: Math.min(rows.length, shown + PAGE) });
+    }
+  };
+  // A tall window can show a whole page with no scrollbar, so keep adding until it scrolls.
+  useLayoutEffect(extend);
+  const visible = rows.slice(0, shown);
   return (
     <section
       className="file-list"
@@ -86,7 +103,7 @@ export default function FileTable({
         />
         <span>{files ? `${fmtN(rows.length)} of ${fmtN(files.length)} files` : "Files"}</span>
       </div>
-      <div className="file-scroll">
+      <div className="file-scroll" ref={scroller} onScroll={extend}>
         <table>
           <thead>
             <tr>
@@ -114,7 +131,7 @@ export default function FileTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((f) => (
+            {visible.map((f) => (
               <tr key={f.path} onDoubleClick={() => onReveal(f.path)}>
                 <td title={f.name}>{f.name}</td>
                 <td>{f.modified === null ? "—" : new Date(f.modified * 1000).toLocaleString()}</td>
@@ -145,6 +162,10 @@ export default function FileTable({
         ) : rows.length === 0 ? (
           <div className="file-message">
             {query ? "No matching files." : "No files directly in this folder."}
+          </div>
+        ) : shown < rows.length ? (
+          <div className="file-message" role="status">
+            {fmtN(shown)} of {fmtN(rows.length)} shown · scroll for more
           </div>
         ) : null}
       </div>

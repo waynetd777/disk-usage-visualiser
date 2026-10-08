@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Wayne Davies
 // SPDX-License-Identifier: MIT (see LICENSE at the repository root)
 
+mod assistant;
 mod cache;
 mod files;
 mod scan;
@@ -387,6 +388,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .manage(Arc::new(assistant::Running::default()))
         .manage(AppState {
             root: Mutex::new(root.clone()),
             scan: Mutex::new(None),
@@ -400,6 +402,9 @@ pub fn run() {
             get_progress,
             get_tree,
             files::get_files,
+            assistant::assistant_status,
+            assistant::ask,
+            assistant::ask_cancel,
             start_scan,
             stop_scan,
             reveal,
@@ -601,6 +606,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, ev| {
+            // No CLI answering a question outlives the app.
+            if let tauri::RunEvent::Exit = ev {
+                app.state::<Arc<assistant::Running>>().kill_all();
+            }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = ev {
                 show_main(app);
